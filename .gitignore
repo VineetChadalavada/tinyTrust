@@ -1,0 +1,18 @@
+# synthesis inputs/outputs not tracked
+synth/lib/*.lib
+synth/calibration/_*
+synth/calibration/tmp/
+
+# sim artifacts
+*.vcd
+*.fst
+sim_build/
+results.xml
+
+# python
+__pycache__/
+*.pyc
+
+# editor/OS
+.vscode/
+Thumbs.db
