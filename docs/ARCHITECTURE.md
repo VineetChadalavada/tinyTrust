@@ -279,12 +279,13 @@ SKY130 HD cell areas (pessimistic by 10–30 % vs. a real ABC/OpenLane flow):
 | **Total (pessimistic)** | **29–32 kGE** | **12–13.5** | |
 | **Total (expected, real flow −20 %)** | **23–26 kGE** | **~10–11** | |
 
-**Plan of record: 4×4 = 16 tiles (~€1,120), pending user sign-off on cost**
-(requirements §8 makes tile growth a user decision). 4×3 = 12 tiles (~€840)
-is reachable only by committing to the trim ladder now, with thin margin.
-The original 4×2 hope is not realistic for this feature set.
-Next checkpoint: re-measure with full core RTL at M1 on a native Yosys+ABC
-flow for a true liberty-mapped number.
+**Plan of record: 4×4 = 16 tiles (~€1,120) — SIGNED OFF by user 2026-07-14.**
+True ABC-mapped areas (see REPORT.md addendum) came in 26 % below the
+pessimistic table: measured four-block subtotal 15.6 kGE / 6.65 tiles,
+projected full SoC ~9–10 tiles. 16 tiles therefore carries ~60 % headroom;
+a down-size to 4×3 = 12 tiles is a realistic decision to revisit at M1 with
+full core RTL on the actual TT hardening flow (tile count only commits at
+submission). The original 4×2 hope remains unrealistic.
 
 ## 11. Verification hooks designed in (DV starts at the spec)
 

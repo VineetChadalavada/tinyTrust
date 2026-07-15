@@ -16,3 +16,7 @@ __pycache__/
 # editor/OS
 .vscode/
 Thumbs.db
+
+# generated test artifacts
+dv/ascon_kat/vectors.memh
+*.vvp

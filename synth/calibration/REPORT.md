@@ -54,6 +54,29 @@ Per requirements §8, **tile count is a user decision** — flagged for sign-off
 Next calibration checkpoint: rerun with the full core RTL at milestone M1,
 ideally with native Yosys+ABC for a true liberty-mapped figure.
 
+## Addendum (2026-07-14, later): TRUE ABC-mapped areas
+
+Native Yosys+ABC (OSS CAD Suite) with full liberty mapping, same RTL:
+
+| Block | ABC-mapped µm² | kGE | Tiles | vs. pessimistic |
+|---|---|---|---|---|
+| ascon_p | 27,291 | 7.27 | 3.10 | −24 % |
+| regfile | 21,592 | 5.75 | 2.45 | −17 % |
+| pmp | 5,912 | 1.57 | 0.67 | −38 % |
+| bootrom | 3,729 | 0.99 | 0.42 | −54 % |
+| **Subtotal** | **58,524** | **15.6** | **6.65** | **−26 %** |
+
+With the projected remainder scaled by the same ~25 % gain (~5.7–7.8 kGE),
+the full SoC lands around **9–10 tiles**. Implications:
+
+- The signed-off **4×4 = 16 tiles stays plan of record** (~60 % headroom —
+  cheap insurance against routing congestion and feature growth).
+- A **down-size to 4×3 = 12 tiles (~20 % margin) is a realistic call to
+  revisit at M1** when the full core RTL exists; TT tile count is only
+  committed at submission.
+- Note: OpenLane final placement will differ somewhat from raw Yosys/ABC
+  numbers; the M1 checkpoint should use the actual TT hardening flow.
+
 ## Reproduce
 
 ```
