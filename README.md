@@ -13,6 +13,8 @@ are documented decisions.
 - [x] Requirements — [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)
 - [x] Architecture spec — [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - [x] Calibration synthesis — [synth/calibration/REPORT.md](synth/calibration/REPORT.md)
+- [x] Verification plan — [docs/VPLAN.md](docs/VPLAN.md)
+- [x] ASCON permutation RTL verified (66/66 KATs vs. pyascon)
 - [ ] Core RTL (M1), privilege+PMP (M2), secure boot (M3), FPGA (M4), DV closure (M5)
 - [ ] Tape-out: targeting a late-2027 Tiny Tapeout SKY shuttle
 

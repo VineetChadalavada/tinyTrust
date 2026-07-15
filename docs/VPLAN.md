@@ -1,0 +1,208 @@
+# TinyTrust — Verification Plan (vplan)
+
+*Status: v1.0 — 2026-07-14. Gates milestone M1; living document — testpoint
+status is tracked here, bugs in the issue tracker.*
+*References: [REQUIREMENTS.md](REQUIREMENTS.md) §6, [ARCHITECTURE.md](ARCHITECTURE.md).*
+
+---
+
+## 1. Strategy overview
+
+Five verification layers, each with a distinct owner-method. A feature is
+"done" only when its testpoints pass **and** its coverage items are hit.
+
+| Layer | Method | Tools | When |
+|---|---|---|---|
+| L1 Block | Self-checking directed TBs + reference models | Icarus, Python golden models | per block, before integration |
+| L2 Core ISA | Formal (bounded) + random instruction streams vs. ISS | riscv-formal/SBY; Python RV32E ISS co-sim | M1–M2 |
+| L3 SoC | cocotb system tests (boot flows, XIP, peripherals) | cocotb + Icarus/Verilator | M3–M4 |
+| L4 Implementation | Gate-level sim w/ SDF, STA, TT precheck | TT OpenLane flow | M5 |
+| L5 Silicon | Bring-up plan executes L3 demos on hardware | UART host scripts | post-fab |
+
+**Reference-model rule:** every checker compares against a model that is
+*independent* of the RTL (vendored third-party where possible — e.g. pyascon
+— or a Python model written from the spec, never from the RTL).
+
+### Tool/platform notes (honest constraints)
+
+- Local (Windows): Icarus + native Yosys/ABC/SBY via OSS CAD Suite; quick
+  regressions.
+- CI (GitHub Actions, Linux): full regression + **Verilator code coverage**
+  (line/toggle) + Spike co-sim for random streams. Spike on Windows is not
+  worth the fight; the ISS-dependent jobs are CI-only, with a small Python
+  RV32E ISS as the local fallback.
+- UVM (ascon block, résumé deliverable): free UVM-capable simulator
+  (Questa free edition or DVT/Xcelium academic access) — tracked as an
+  external dependency, not on the critical path to tape-out.
+
+## 2. Testbench architectures
+
+- **`dv/ascon_kat/`** (exists): vector-driven Icarus TB vs. pyascon. Extend
+  with interface-corner tests (§4.3).
+- **`dv/core_iss/`** (M1): assembly/ELF loader + instruction-stream runner.
+  RTL retire interface (RVFI) logged and compared instruction-by-instruction
+  against the ISS (Spike in CI, Python ISS locally). Random generator:
+  constrained templates (arith bursts, load/store storms, branch mazes,
+  trap bombs) with RV32E register constraint.
+- **`dv/formal/`** (M1): riscv-formal harness — core exposes an **RVFI
+  port** from day one (this is a design requirement on the core RTL, not an
+  afterthought). SBY bounded proofs per instruction class + custom SVA for
+  PMP/bus invariants.
+- **`dv/soc/`** (M3): cocotb TB with behavioral QSPI flash + PSRAM models
+  (W25Q-style command set incl. continuous-read; PSRAM quad R/W), UART
+  monitor/driver, strap control, alert-pin monitor.
+- **`dv/uvm/`** (parallel track): UVM env for ascon_p — sequence items =
+  (state, rounds) transactions, scoreboard vs. pyascon via DPI or file
+  exchange, functional covergroups (§5).
+
+## 3. Feature → testpoint matrix: core (L2)
+
+IDs are stable; ☐/☑ tracked here. "F" = also covered by riscv-formal proof.
+
+### 3.1 ISA — RV32E base
+
+| ID | Testpoint | Method |
+|---|---|---|
+| CPU-ARITH-01 | All ALU ops, directed corner operands (0, ±1, INT_MIN, 0x7FFFFFFF, sign boundaries) | directed + F |
+| CPU-ARITH-02 | SLT/SLTU signed/unsigned boundary matrix | directed + F |
+| CPU-SHIFT-01 | Shifts by 0, 1, 31; iterative-shifter cycle count == shamt | directed + F |
+| CPU-IMM-01 | LUI/AUIPC/immediates: sign extension, U-type alignment | random + F |
+| CPU-BR-01 | All branches taken/not-taken × forward/backward targets | random + F |
+| CPU-JMP-01 | JAL/JALR incl. rd=x0, target misalignment → trap | directed + F |
+| CPU-LS-01 | LB/LBU/LH/LHU/LW/SB/SH/SW all byte lanes, sign/zero extension | directed + F |
+| CPU-LS-02 | Misaligned load/store/fetch → correct trap cause, no side effect | directed + F |
+| CPU-RVE-01 | Opcodes referencing x16–x31 → illegal-instruction trap | directed |
+| CPU-ILL-01 | Illegal/unimplemented opcodes (incl. MUL/DIV, FENCE.I handling as specced) → trap | random-illegal + F |
+| CPU-X0-01 | x0 never written, reads as 0 (all instruction classes) | F |
+
+### 3.2 Privilege, traps, CSRs
+
+| ID | Testpoint | Method |
+|---|---|---|
+| PRV-TRAP-01 | Every mcause in ARCHITECTURE §5.3 reachable; mepc/mcause/mstatus stack correct | directed |
+| PRV-TRAP-02 | mret: MPP/MPIE/MIE restore semantics, return to U and to M | directed + F |
+| PRV-CSR-01 | CSR RW/RS/RC ops on every implemented CSR; WARL fields hold legal values only (mtvec alignment, MPP∈{00,11}) | directed |
+| PRV-CSR-02 | Unimplemented CSR access → illegal-instruction trap | random |
+| PRV-CSR-03 | CSR access from U-mode → trap (machine CSRs) | directed |
+| PRV-INT-01 | Timer + external interrupt: taken only when MIE/mie allow; mip reflects lines; priority vs. sync exceptions | directed |
+| PRV-INT-02 | Interrupt arrival in every core FSM state (fetch-wait, exec, mem-wait) — taken at retire boundary only | random-irq injection |
+| PRV-ECALL-01 | ecall from M and from U → distinct causes | directed |
+
+### 3.3 PMP
+
+| ID | Testpoint | Method |
+|---|---|---|
+| PMP-MATCH-01 | NAPOT decode: region sizes 1 KiB → 4 GiB, address inside/outside/boundary ±4 | directed sweep |
+| PMP-PERM-01 | Full R/W/X × U-mode access-type matrix per entry (deny → correct fault cause) | directed |
+| PMP-PRIO-01 | Overlapping entries: lowest-numbered wins (incl. deny-over-allow both orders) | directed |
+| PMP-MMODE-01 | M-mode ignores unlocked entries; locked entry enforces on M-mode | directed |
+| PMP-LOCK-01 | Locked cfg/addr writes ignored until reset; lock survives U↔M transitions | directed |
+| PMP-WARL-01 | TOR/NA4 writes read back as OFF; grain bits read-as-ones under NAPOT | directed |
+| PMP-U-NOMATCH-01 | U-mode access with no matching entry → fault | directed + F |
+| PMP-SIDE-01 | **Denied access produces no bus transaction** (no MMIO side effect) | SVA assertion, all sims |
+
+### 3.4 Core microarchitecture invariants (formal-first)
+
+| ID | Invariant | Method |
+|---|---|---|
+| UAR-FSM-01 | Core FSM: no unreachable/illegal state; encoded-state parity holds or fault trap fires | F + fault-injection sim |
+| UAR-BUS-01 | Exactly one outstanding transaction; valid stable until ready | SVA |
+| UAR-RVFI-01 | riscv-formal insn/reg/PC/mem channel consistency (catches whole bug classes) | F |
+| UAR-TIME-01 | Instruction never retires twice / lost on trap | F |
+
+## 4. Feature → testpoint matrix: blocks & SoC (L1/L3)
+
+### 4.1 Secure boot (SoC-critical; ROM is unpatchable)
+
+| ID | Testpoint | Method |
+|---|---|---|
+| BOOT-OK-01 | Golden image boots: BOOT_OK pin, PMP entry 0 locked over ROM, entry at correct flash offset | cocotb |
+| BOOT-TAMPER-01 | Each of: 1-bit flip in image body / header length / stored digest → refuse boot, ALERT high, WFI loop | cocotb sweep |
+| BOOT-TAMPER-02 | Truncated image, length = 0, length > flash window → clean rejection (no hang, no overflow) | cocotb |
+| BOOT-DEV-01 | DEV strap: verification skipped, distinct BOOT_OK blink pattern; strap sampled once — toggling after sample has no effect | cocotb |
+| BOOT-ROMLOCK-01 | Post-boot: fetch/load from ROM region faults (M and U) | cocotb |
+| BOOT-ROM-EXH-01 | ROM code: every branch path executed; instruction-level co-sim vs. Python model of boot flow | dedicated TB, 100 % path cov |
+| BOOT-HASH-01 | ROM's ASCON sequencing computes Ascon-Hash256 == pyascon on 3 image sizes (incl. non-multiple-of-rate) | cocotb + pyascon |
+
+### 4.2 QSPI XIP controller
+
+| ID | Testpoint | Method |
+|---|---|---|
+| QSPI-READ-01 | 1-bit SPI read + quad fast-read + continuous-read entry/exit vs. flash model | cocotb |
+| QSPI-SEQ-01 | Sequential fetch burst uses continuous mode (cycle-count budget assertion) | cocotb |
+| QSPI-PSRAM-01 | PSRAM word R/W all byte strobes; flash/PSRAM CS never both active | cocotb + SVA |
+| QSPI-DIRECT-01 | Bit-bang mode: JEDEC-ID read sequence; regains XIP after | cocotb |
+| QSPI-ABORT-01 | Trap/PMP-deny during fetch: no wedged transaction | random |
+
+### 4.3 ASCON block (extends passing KAT suite)
+
+| ID | Testpoint | Method |
+|---|---|---|
+| ASC-KAT-01 | ☑ 66/66 permutation KATs vs. pyascon (zero/ones/random × 6/8/12 rounds) | done 2026-07-14 |
+| ASC-IF-01 | Write/read while busy: ignored/safe; state unchanged by reads | directed |
+| ASC-IF-02 | rounds ∈ {0 (no-op), 13–15 (clamp to 12)} WARL behavior | directed |
+| ASC-IF-03 | busy cycle count == effective rounds, back-to-back starts | directed |
+| ASC-HASH-01 | Software-sequenced Ascon-Hash256 (firmware C) matches pyascon on NIST message-length sweep 0–1024 B | SoC-level |
+| ASC-UVM-01 | UVM env: constrained-random transactions, scoreboard vs. reference, covergroups closed | UVM track |
+
+### 4.4 Peripherals, SEC, fault hardening
+
+| ID | Testpoint | Method |
+|---|---|---|
+| UART-01 | TX/RX loopback all byte values, baud divisor min/max, RX overflow flag | cocotb |
+| TIME-01 | mtime wrap, mtimecmp equality/past-value semantics, MTIP set/clear | directed |
+| SEC-01 | STATUS reflects boot stage + straps; ALERT is W1S and never clears except reset | directed |
+| FLT-01 | Forced FSM-state corruption (sim force) → fault trap + sticky ALERT within N cycles | fault-injection sim |
+| GPIO-01 | OUT/IN paths, pin-map conformance to ARCHITECTURE §3 | cocotb |
+
+## 5. Coverage model
+
+**Code coverage** (Verilator, CI): line ≥ 95 %, toggle ≥ 90 % on rtl/ —
+waivers documented per line with rationale (e.g. defensive defaults).
+
+**Functional coverage** (cocotb-coverage / UVM covergroups):
+- Instruction class × source-register-equal-destination × operand-sign cross
+- Trap cause × privilege × core-FSM-state-at-trap cross
+- PMP: entry × permission × access-type × M/U × locked cross (the full cube)
+- ASCON: rounds value × start-while-busy × word-access pattern
+- QSPI: mode × burst length × abort-point
+- Boot: image size mod rate × tamper location bins
+
+**Closure rule:** a coverage hole is either hit by a new test or waived in
+writing here — never silently accepted.
+
+## 6. Regression & CI
+
+- `dv/regress.ps1` (local): ascon_kat + core directed + smoke SoC test; must
+  pass before every commit touching rtl/ or rom/.
+- GitHub Actions (on push): full matrix — Icarus directed suites, Verilator
+  coverage build, riscv-formal SBY jobs, random-stream co-sim (Spike),
+  nightly long-random seed sweep. Badge in README.
+- Every regression failure gets an issue before it gets a fix.
+
+## 7. Bug tracking discipline
+
+GitHub issues, label `bug/rtl`, `bug/tb`, `bug/spec`. Mandatory fields:
+symptom, root cause (5-whys depth), fix commit, **regression test added**
+(issue may not close without one), found-by (which method — feeds the
+"which techniques actually caught bugs" retrospective, prime interview
+material).
+
+## 8. Milestone exit criteria
+
+| Milestone | Exit criteria (all mandatory) |
+|---|---|
+| **M1** core ISA-complete | §3.1 + UAR-* green; riscv-formal clean at depth ≥ 20; 1 M random instructions vs. ISS zero-mismatch; RVFI port in RTL |
+| **M2** privilege+PMP | §3.2 + §3.3 green; PMP functional-coverage cube closed; formal PMP invariants proven |
+| **M3** secure boot | §4.1 + §4.3 green incl. ROM 100 % path coverage; tamper sweep ≥ 1000 randomized corruptions, zero false-accepts |
+| **M4** SoC/FPGA | §4.2 + §4.4 green; full boot demo in sim **and** on FPGA; code coverage targets met |
+| **M5** tape-out gate | All testpoints ☑ or waived; nightly regression green 14 consecutive days; GL sim (SDF) boot smoke passes; TT precheck clean; zero open `bug/rtl` issues |
+
+## 9. Open risks
+
+| Risk | Mitigation |
+|---|---|
+| riscv-formal RV32E support gaps | RVFI is standard; constrain checks to x0–x15; upstream issues early at M1 start |
+| Icarus/Verilator SVA support is partial | Keep SVA simple (immediate + bounded); duplicate critical invariants as cocotb checks |
+| UVM simulator access | Parallel track, not tape-out-gating |
+| Python ISS correctness (local co-sim) | ISS itself validated against Spike in CI before trusted locally |
