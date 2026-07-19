@@ -55,7 +55,7 @@ module pmp (
                 for (i = 0; i < 4; i = i + 1) begin
                     if (!cfg[i][4]) begin
                         cfg[i][4]   <= csr_wdata[i*8+7];                    // L
-                        cfg[i][3]   <= (csr_wdata[i*8+4 +: 2] == 2'b11);    // A: NAPOT else OFF
+                        cfg[i][3]   <= (csr_wdata[i*8+3 +: 2] == 2'b11);    // A: NAPOT else OFF
                         cfg[i][2:0] <= csr_wdata[i*8 +: 3];                 // X, W, R
                     end
                 end

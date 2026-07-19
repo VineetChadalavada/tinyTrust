@@ -15,7 +15,11 @@ are documented decisions.
 - [x] Calibration synthesis — [synth/calibration/REPORT.md](synth/calibration/REPORT.md)
 - [x] Verification plan — [docs/VPLAN.md](docs/VPLAN.md)
 - [x] ASCON permutation RTL verified (66/66 KATs vs. pyascon)
-- [ ] Core RTL (M1), privilege+PMP (M2), secure boot (M3), FPGA (M4), DV closure (M5)
+- [x] RV32E core RTL, sim leg of M1: 16 directed suites + 353k random
+      instructions vs. spec-written ISS, zero mismatches ([dv/core_iss](dv/));
+      first co-sim session caught [BUG-001](docs/BUGLOG.md)
+- [ ] M1 exit: riscv-formal (depth ≥ 20) + 1M-instr Spike co-sim in CI;
+      then privilege+PMP (M2), secure boot (M3), FPGA (M4), DV closure (M5)
 - [ ] Tape-out: targeting a late-2027 Tiny Tapeout SKY shuttle
 
 ## Layout

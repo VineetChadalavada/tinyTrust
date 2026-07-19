@@ -39,11 +39,14 @@ Five verification layers, each with a distinct owner-method. A feature is
 
 - **`dv/ascon_kat/`** (exists): vector-driven Icarus TB vs. pyascon. Extend
   with interface-corner tests (§4.3).
-- **`dv/core_iss/`** (M1): assembly/ELF loader + instruction-stream runner.
-  RTL retire interface (RVFI) logged and compared instruction-by-instruction
-  against the ISS (Spike in CI, Python ISS locally). Random generator:
-  constrained templates (arith bursts, load/store storms, branch mazes,
-  trap bombs) with RV32E register constraint.
+- **`dv/core_iss/`** (exists, 2026-07-19): instruction-stream runner with
+  encoder-built programs (no external toolchain needed locally). RTL retire
+  interface (RVFI) logged and compared instruction-by-instruction against
+  the ISS (Spike in CI, Python ISS locally — `rv32e.py`, written from the
+  spec per the reference-model rule). Random generator: constrained
+  templates (arith bursts, load/store storms, branch mazes, trap bombs)
+  with RV32E register constraint. Bus latency randomized (2–5 cycles) or
+  pinned minimum.
 - **`dv/formal/`** (M1): riscv-formal harness — core exposes an **RVFI
   port** from day one (this is a design requirement on the core RTL, not an
   afterthought). SBY bounded proofs per instruction class + custom SVA for
@@ -60,6 +63,14 @@ Five verification layers, each with a distinct owner-method. A feature is
 IDs are stable; ☐/☑ tracked here. "F" = also covered by riscv-formal proof.
 
 ### 3.1 ISA — RV32E base
+
+*Status 2026-07-19: every §3.1 testpoint is green on the **sim** leg — 16
+directed programs + 353,713 random instructions (50 seeds, two bus-latency
+profiles), zero mismatches vs. the Python ISS. First session found BUG-001
+(docs/BUGLOG.md, pmpcfg A-field). Still open before M1 exit: the "F"
+(riscv-formal) half of each testpoint, the 1 M-instruction Spike co-sim in
+CI, and the CPU-SHIFT-01 cycle-count clause (RVFI compare is untimed — needs
+a TB cycle assertion).*
 
 | ID | Testpoint | Method |
 |---|---|---|

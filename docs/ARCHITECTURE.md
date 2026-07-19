@@ -108,8 +108,8 @@ Decode uses `addr[31:28]` only (cheap). Unmapped access → access-fault trap.
 
 `MTIME`/`MTIMECMP` are 32-bit (wraps in ~107 s at 40 MHz) — documented
 deviation from the 64-bit spec counters; `mcycle`/`minstret` are not
-implemented (reads trap → emulable, or read-as-zero; final choice at RTL time,
-recorded here when made).
+implemented — **decided at RTL time (2026-07-19): any counter-CSR access
+traps as illegal instruction** (keeps the trap-and-emulate path open).
 
 ---
 
@@ -159,6 +159,12 @@ be copied to PSRAM (still external) or kept tiny.
   `mscratch`, `mie`/`mip` (MTIE/MTIP, MEIE/MEIP only), `misa` (read 0 —
   legal), `mvendorid/marchid/mimpid/mhartid` (read 0),
   `pmpcfg0`, `pmpaddr0..3`.
+- **RTL-time decisions (2026-07-19, implemented in `rtl/core/core.v`):**
+  unimplemented CSRs (incl. all counters) trap as illegal instruction;
+  FENCE is a NOP; FENCE.I traps (Zifencei not claimed — no caches);
+  WFI is a NOP (spec-legal); `mstatus.MPP` writes of 01/10 map to 00 (U);
+  the §5.5 FSM-fault forced trap uses mcause `0x8000_0018` (platform
+  interrupt code 24) and produces no RVFI retire.
 - **Exception causes used**: instruction access fault (1), illegal
   instruction (2), breakpoint (3), load access fault (5), store access
   fault (7), ecall-from-U (8), ecall-from-M (11), misaligned
@@ -302,7 +308,8 @@ submission). The original 4×2 hope remains unrealistic.
 
 ## 12. Open items (tracked, non-blocking)
 
-1. `mcycle` read-as-zero vs. trap-and-emulate — decide at RTL.
+1. ~~`mcycle` read-as-zero vs. trap-and-emulate~~ — **decided: trap**
+   (§5.3, 2026-07-19).
 2. C extension go/no-go — decide at M1 with calibrated area + XIP CPI data.
 3. PSRAM part selection (affects quad command set) — pick the TT-community-
    proven part used by tinyQV-family boards.

@@ -6,6 +6,13 @@ Verification strategy per REQUIREMENTS.md §6. Planned structure:
   against the vendored pyascon reference (`third_party/ascon_ref.py`, CC0,
   by the Ascon team — independent of our RTL). Vectors: zero/all-ones/random
   states x {6,8,12} rounds. Run with `run.ps1` (needs OSS CAD Suite).
+- `core_iss/` — **core lockstep co-sim (live since 2026-07-19)**:
+  spec-written Python RV32E ISS + instruction encoders (`rv32e.py`),
+  directed suites for vplan §3.1, constrained-random template generator,
+  RVFI trace compare against `rtl/core/core.v` under randomized bus
+  latency. 16 directed tests + 350k+ random instructions passing; found
+  BUG-001 (see docs/BUGLOG.md) in its first random session.
+  Run: `python cosim.py --directed --random 4` (or `run.ps1`).
 - `cocotb/` — Python testbenches + regressions (Icarus/Verilator), for the
   core and SoC level.
 - `formal/` — riscv-formal harness for the core; SVA property files for
