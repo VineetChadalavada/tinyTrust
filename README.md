@@ -8,6 +8,10 @@ a lean PMP, ASCON-based integrity-verified secure boot from external QSPI
 flash, and fault-hardened control FSMs. Threat model and every spec deviation
 are documented decisions.
 
+**New here?** Read [docs/PROJECT_BOOK.md](docs/PROJECT_BOOK.md) — the full
+project manual: what this is, why every decision went the way it did, the
+verification story, results, and the bugs found along the way.
+
 ## Status
 
 - [x] Requirements — [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md)
