@@ -64,13 +64,23 @@ IDs are stable; ☐/☑ tracked here. "F" = also covered by riscv-formal proof.
 
 ### 3.1 ISA — RV32E base
 
-*Status 2026-07-19: every §3.1 testpoint is green on the **sim** leg — 16
-directed programs + 353,713 random instructions (50 seeds, two bus-latency
-profiles), zero mismatches vs. the Python ISS. First session found BUG-001
-(docs/BUGLOG.md, pmpcfg A-field). Still open before M1 exit: the "F"
-(riscv-formal) half of each testpoint, the 1 M-instruction Spike co-sim in
-CI, and the CPU-SHIFT-01 cycle-count clause (RVFI compare is untimed — needs
-a TB cycle assertion).*
+*Status 2026-07-22: every §3.1 testpoint is green on **both** legs. Sim: 16
+directed programs + a 1,207,930-instruction random soak (190 programs, two
+bus-latency profiles — maxlat=3 and min-latency), zero mismatches vs. the
+Python ISS; the CPU-SHIFT-01 cycle-count clause is asserted directly in
+tb_core.v (S_SHIFT occupancy == shamt, per retire). This clears the M1
+"1 M random instructions vs. ISS" criterion on the RTL-vs-ISS lockstep leg.
+Formal ("F"): riscv-formal 44/44 bounded checks pass (dv/formal —
+insn/reg/pc_fwd/pc_bwd/unique/causal/liveness/cover). Bring-up found BUG-001
+(pmpcfg A-field, sim) and the two formal-harness defects BUG-002 (the memory
+environment could take bus-fault and PMP/privilege traps the base insn spec
+can't model — every counterexample was correct DUT behavior) and BUG-003 (a
+false-green in the check reporter). The `reg` check runs at CHECK_CYCLE 30 via
+abc-bmc3 (see dv/formal/README.md — the depth-40 SMT query is intractable).
+Still open before M1 exit: cross-validating the ISS itself against Spike in
+CI (a distinct check from the RTL-vs-ISS soak above — it guards against a
+shared spec-misread in the golden model), plus the CI wiring (no git remote
+yet).*
 
 | ID | Testpoint | Method |
 |---|---|---|

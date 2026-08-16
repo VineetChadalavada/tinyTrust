@@ -153,6 +153,43 @@ module tb_core;
         end
     end
 
+    // CPU-SHIFT-01 cycle-count clause: the iterative shifter must spend
+    // exactly shamt cycles in S_SHIFT (shamt = 0 takes none). The RVFI
+    // trace compare is untimed, so this is checked directly per retire.
+    integer shift_cycles;
+    reg [4:0] exp_shamt;
+    reg       is_shift_ret;
+    always @(posedge clk) begin
+        if (!rst_n) begin
+            shift_cycles = 0;
+        end else begin
+            if (dut.state[3])           // S_SHIFT (one-hot bit index)
+                shift_cycles = shift_cycles + 1;
+            if (rvfi_valid) begin
+                is_shift_ret = !rvfi_trap
+                    && (rvfi_insn[6:0] == 7'b0110011
+                        || rvfi_insn[6:0] == 7'b0010011)
+                    && (rvfi_insn[14:12] == 3'b001
+                        || rvfi_insn[14:12] == 3'b101);
+                exp_shamt = rvfi_insn[5] ? rvfi_rs2_rdata[4:0]  // R-form
+                                         : rvfi_insn[24:20];    // I-form
+                if (is_shift_ret && shift_cycles !== {27'd0, exp_shamt}) begin
+                    $display("COSIM SHIFTERR pc=%08x insn=%08x cycles=%0d shamt=%0d",
+                             rvfi_pc_rdata, rvfi_insn, shift_cycles, exp_shamt);
+                    $fclose(trace_fd);
+                    $finish;
+                end
+                if (!is_shift_ret && shift_cycles != 0) begin
+                    $display("COSIM SHIFTERR non-shift insn=%08x used S_SHIFT",
+                             rvfi_insn);
+                    $fclose(trace_fd);
+                    $finish;
+                end
+                shift_cycles = 0;
+            end
+        end
+    end
+
     always @(posedge clk) begin
         if (fsm_fault) begin
             $display("COSIM FSMFAULT");

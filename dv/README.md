@@ -15,8 +15,10 @@ Verification strategy per REQUIREMENTS.md §6. Planned structure:
   Run: `python cosim.py --directed --random 4` (or `run.ps1`).
 - `cocotb/` — Python testbenches + regressions (Icarus/Verilator), for the
   core and SoC level.
-- `formal/` — riscv-formal harness for the core; SVA property files for
-  bus/PMP invariants ("a denied access never reaches its target").
+- `formal/` — **riscv-formal harness (live since 2026-07-19)**: SBY bounded
+  checks over the core's RVFI port (insn depth 25, shifts 60), with the
+  RV32E space handled by a wrapper assumption (see `formal/README.md`).
+  SVA property files for bus/PMP invariants come with M2.
 - `uvm/` — UVM environment for the ascon_p block (agent, scoreboard vs.
   reference model, functional coverage), run on a free UVM-capable
   simulator. Exists specifically to demonstrate industry-standard DV.

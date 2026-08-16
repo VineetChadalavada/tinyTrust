@@ -4,9 +4,10 @@
 toward silicon on a Tiny Tapeout SKY130 shuttle — and the engineering record
 of how it was built and verified.**
 
-*Snapshot date: 2026-07-19 (mid-M1). This is a living document; the
-Results chapter carries exact numbers as of this date and is updated at
-each milestone.*
+*Snapshot date: 2026-07-22 (M1 near exit — both verification legs green;
+only ISS-vs-Spike-in-CI remains). This is a living document; the Results
+chapter carries exact numbers as of this date and is updated at each
+milestone.*
 
 ---
 
@@ -361,15 +362,35 @@ milestone exit criteria, bug-tracking discipline.
   shifter must spend *exactly* `shamt` cycles shifting, checked on every
   retired instruction.
 
-**2026-07-19 (same day, second session) — Formal.** The riscv-formal
-harness under `dv/formal/`: SBY bounded model checking with
+**2026-07-19 (same day, second session) — Formal, brought up.** The
+riscv-formal harness under `dv/formal/`: SBY bounded model checking with
 smtbmc/boolector, instruction checks at depth 25 (the M1 gate is ≥ 20),
 shift instructions at depth 60 to accommodate the iterative shifter,
 consistency checks (`reg`, `pc_fwd`/`pc_bwd`, `unique`, `causal`,
-`liveness`, `cover`). Status at snapshot: **43 of 44 checks complete, all
-passing, zero counterexamples**; the last (`reg`, the deepest) still
-solving. Two Windows-specific bugs in the upstream tooling were found and
-worked around along the way (Chapter 6).
+`liveness`, `cover`). Two Windows-specific upstream-tooling bugs found and
+worked around (Chapter 6). Left at 43/44 with `reg` still solving — the
+2026-07-22 session finished the job.
+
+**2026-07-22 — Formal closed, and the sim soak to 1 M.** Taking the formal
+leg from 43/44 to a genuine **44/44** exposed that the load/store checks
+had never actually been green: two harness defects were masking it.
+**BUG-002** — the wrapper let the environment take traps the base insn spec
+can't model (injected bus faults *and*, once those were tied off,
+PMP/privilege denials from a solver-installed locked pmpcfg entry or an
+`mret` into U-mode); every counterexample was *correct* core behavior.
+Fixed with `assume(!bus_fault)` plus a `mmode_safe` fetch assumption
+(forbid `mret` + pmpcfg/pmpaddr writes, keeping M-mode/PMP-off so every
+access is permitted by construction — after learning the hard way that
+yosys `read_verilog` has no hierarchical refs, so an `assume(uut.pmp_allow)`
+silently constrains nothing). **BUG-003** — the runner reported those FAILs
+as PASS, because `expect pass,fail` makes SBY exit 0 on a real
+counterexample and the reporter keyed on the exit code; fixed to trust
+SBY's `DONE (STATUS)` verdict. The deep `reg` check proved intractable for
+five SMT/BTOR engines at CHECK_CYCLE 40, so it now runs at 30 via `abc bmc3`
+on a memory-mapped netlist. Same session: extended the RTL-vs-ISS lockstep
+soak to **1,207,930 random instructions across two latency profiles, zero
+mismatches** — clearing the M1 1 M target; `cosim.py` now reports the
+cumulative retire count. Bugs logged BUG-002/003 per the found-by rule.
 
 ---
 
@@ -381,7 +402,7 @@ five layers, each with an independent reference (VPLAN §1):
 | Layer | What | Reference | Status |
 |---|---|---|---|
 | L1 Block | Directed self-checking TBs | pyascon, Python golden models | ASCON done |
-| L2 Core | ISS lockstep co-sim + riscv-formal | spec-written ISS; third-party properties | co-sim green; formal 43/44 |
+| L2 Core | ISS lockstep co-sim + riscv-formal | spec-written ISS; third-party properties | co-sim green (1.2 M random); formal 44/44 |
 | L3 SoC | cocotb system tests (boot, XIP, peripherals) | behavioral flash/PSRAM models | M3 |
 | L4 Implementation | Gate-level sim + SDF, STA, TT precheck | — | M5 |
 | L5 Silicon | Bring-up plan executes L3 demos on hardware | — | post-fab |
@@ -496,10 +517,20 @@ or data pattern violates the checked property — the solver plays adversary.
 
 Setup highlights (`dv/formal/`):
 
-- The environment model gives the solver **full freedom over the bus**
-  (unconstrained read data and fault signaling) with one fairness
-  assumption — ready arrives within 2 cycles — so search depth is spent on
-  instructions, not stalls.
+- The environment gives the solver free read data and a fairness
+  assumption (ready within 2 cycles) so depth is spent on instructions, not
+  stalls. But the base insn models assume an *ideal, unrestricted memory*,
+  so three sources of a *correct* trap the spec can't predict must be tied
+  off, each verified in sim instead: `bus_fault` (assume off — the
+  fault→precise-trap path is the `ls_fault`/`fetch_fault` directed tests),
+  and PMP/privilege denial (a `mmode_safe` fetch assumption forbids `mret`
+  and pmpcfg/pmpaddr writes, keeping the core M-mode/PMP-off so every access
+  is permitted by construction — PMP allow/deny is the §3.3 directed matrix).
+  Each is a sound *environment* restriction with the excluded space covered
+  elsewhere. Getting there taught two lessons the hard way (BUG-002/003):
+  a correct DUT trap reads as a spec mismatch, and yosys `read_verilog` has
+  no hierarchical references — you constrain the fetch stream, not an
+  internal wire.
 - **The RV32E gap**: riscv-formal has no first-class RV32E profile (its
   generator defines the `MISA_E` bit but generates no rv32e instruction
   set). Rather than fork the suite, the wrapper adds a *sound environment
@@ -512,7 +543,12 @@ Setup highlights (`dv/formal/`):
   soundness argument — is the point.
 - Depths: instruction checks at 25 cycles (M1 gate: ≥ 20); shift
   instructions at 60, because a worst-case iterative shift takes 31+
-  cycles to retire; consistency checks 30–60.
+  cycles to retire; consistency checks 30–60. The `reg` check is the one
+  outlier — its monolithic BMC query at CHECK_CYCLE with the register file
+  as an SMT array is intractable past ~depth 30 for every SMT/BTOR engine
+  tried; it runs at 30 via `abc bmc3` on a `memory_map`'d netlist (pure SAT,
+  no array refinement), with longer-latency-writer hazards covered by the
+  1.2 M-instruction co-sim.
 - Every check also proves `assert(!fsm_fault)` — the FSM/privilege-shadow
   invariant — at its full depth, for free.
 
@@ -590,7 +626,7 @@ demand the counterexample, not to start "fixing" the design.
 
 ---
 
-## Chapter 7 — Results dashboard (as of 2026-07-19)
+## Chapter 7 — Results dashboard (as of 2026-07-22)
 
 ### Verification
 
@@ -598,11 +634,12 @@ demand the counterexample, not to start "fixing" the design.
 |---|---|
 | ASCON permutation KATs vs. pyascon | **66 / 66** (zero/ones/random × 6/8/12 rounds) |
 | Core directed co-sim suites | **16 / 16 green** (~4,900 retirements) |
-| Random instructions vs. ISS, lockstep RVFI compare | **353,713 — zero mismatches** (50 seeds; latencies 2–5 cy and min) |
+| Random instructions vs. ISS, lockstep RVFI compare | **1,207,930 — zero mismatches** (190 programs, two latency profiles: 2–5 cy and min) — clears the M1 1 M target |
 | Shift cycle-count assertion (CPU-SHIFT-01) | asserted on every retire, green |
-| riscv-formal bounded checks | **43 / 44 complete, all passing** (insn depth 25, shifts 60); `reg` (depth 40) still solving at snapshot |
-| FSM-fault invariant (UAR-FSM-01, formal half) | proven inside all completed checks |
-| RTL bugs found → fixed → regression-guarded | 1 (BUG-001) |
+| riscv-formal bounded checks | **44 / 44 passing** (insn depth 25, shifts 60; `reg` CHECK_CYCLE 30 via abc-bmc3 — the depth-40 SMT query is intractable, see BUG-002/003) |
+| FSM-fault invariant (UAR-FSM-01, formal half) | proven inside all 44 checks |
+| RTL bugs found → fixed → regression-guarded | 1 (BUG-001, pmpcfg A-field) |
+| Verification-harness bugs found → fixed | 2 (BUG-002 env under-constraint; BUG-003 false-green reporter) — both DUT-correct |
 | Upstream tool bugs found | 2 (documented, workarounds committed) |
 
 Representative solver times (smtbmc/boolector, depth 25 unless noted):
@@ -625,7 +662,7 @@ ALU/branch/load/store checks 8–18 s each; iterative-shift checks at depth
 
 | Milestone | Exit criteria | Status |
 |---|---|---|
-| M1 core ISA-complete | vplan §3.1 + UAR green; formal depth ≥ 20; 1 M random vs. ISS; RVFI in RTL | **sim leg done; formal 43/44; Spike/CI leg open** |
+| M1 core ISA-complete | vplan §3.1 + UAR green; formal depth ≥ 20; 1 M random vs. ISS; RVFI in RTL | **sim leg done (1.2 M random, 0 mismatches); formal 44/44; only ISS-vs-Spike-in-CI leg open** |
 | M2 privilege + PMP | §3.2 + §3.3; PMP coverage cube closed; formal PMP invariants | infrastructure largely in place |
 | M3 secure boot | boot suite; ROM 100 % path cov; ≥ 1000 tamper trials, 0 false accepts | — |
 | M4 SoC + FPGA | full boot demo in sim and on FPGA | — |

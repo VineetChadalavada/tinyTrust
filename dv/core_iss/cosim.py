@@ -51,7 +51,7 @@ def run_one(name, words, vvp, seed=1, maxlat=3, max_steps=2_000_000,
     if tohost is None:
         print(f"FAIL {name}: ISS never reached TOHOST "
               f"({len(iss_lines)} retires)")
-        return False
+        return False, 0
 
     tracef = os.path.join(OUT, f"{name}.rtl.txt")
     r = subprocess.run(
@@ -61,7 +61,7 @@ def run_one(name, words, vvp, seed=1, maxlat=3, max_steps=2_000_000,
     if "COSIM DONE" not in r.stdout:
         tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
         print(f"FAIL {name}: RTL sim did not finish cleanly: {tail}")
-        return False
+        return False, 0
 
     with open(tracef) as f:
         rtl_lines = [l.strip() for l in f if l.strip()]
@@ -78,13 +78,13 @@ def run_one(name, words, vvp, seed=1, maxlat=3, max_steps=2_000_000,
                 print(f"  ctx: {iss_lines[j]}")
             with open(os.path.join(OUT, f"{name}.iss.txt"), "w") as f:
                 f.write("".join(l + "\n" for l in iss_lines))
-            return False
+            return False, 0
     if len(iss_lines) != len(rtl_lines):
         print(f"FAIL {name}: length mismatch ISS={len(iss_lines)} "
               f"RTL={len(rtl_lines)}")
-        return False
+        return False, 0
     print(f"PASS {name}: {len(iss_lines)} retires, tohost={tohost:#x}")
-    return True
+    return True, len(iss_lines)
 
 
 def main():
@@ -116,8 +116,11 @@ def main():
         results.append(run_one(f"rand{seed}", words, vvp, seed=seed,
                                maxlat=args.maxlat))
 
-    total, good = len(results), sum(results)
-    print(f"{good}/{total} runs passed")
+    total, good = len(results), sum(ok for ok, _ in results)
+    retired = sum(cnt for _, cnt in results)
+    print(f"{good}/{total} runs passed; "
+          f"{retired} retired instructions co-simulated (0 mismatches)"
+          if good == total else f"{good}/{total} runs passed")
     sys.exit(0 if good == total else 1)
 
 

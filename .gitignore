@@ -20,4 +20,6 @@ Thumbs.db
 # generated test artifacts
 dv/ascon_kat/vectors.memh
 dv/core_iss/out/
+dv/formal/riscv-formal/
+dv/formal/toolshim/
 *.vvp
