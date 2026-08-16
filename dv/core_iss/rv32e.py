@@ -1,8 +1,11 @@
-"""TinyTrust RV32E instruction encoders + ISS golden model.
+"""TinyTrust RV32I instruction encoders + ISS golden model.
+
+(Module name kept as rv32e.py for import stability; the ISA is RV32I as of
+docs/RETARGET.md D18.)
 
 The ISS is written from the RISC-V spec and ARCHITECTURE.md (never from the
-RTL source): it models the exact architectural choices — RV32E register
-constraint, trap causes, mtval absent, WARL rules (mtvec 16-byte base,
+RTL source): it models the exact architectural choices — 32 architectural
+registers, trap causes, mtval absent, WARL rules (mtvec 16-byte base,
 MPP in {00,11}, NAPOT-only PMP with 1 KiB grain), unimplemented counters
 trapping, FENCE=NOP / FENCE.I=illegal, WFI=NOP.
 
@@ -154,7 +157,7 @@ class ISS:
         self.ram = bytearray(RAM_SIZE)
         for i, w in enumerate(program_words):
             self.ram[i * 4:i * 4 + 4] = (w & M32).to_bytes(4, "little")
-        self.regs = [0] * 16
+        self.regs = [0] * 32
         self.pc = reset_pc
         self.priv_m = True
         self.mstatus_mie = False
@@ -367,11 +370,8 @@ class ISS:
         uses_rs2 = is_op or is_store or is_branch
         uses_rd = is_lui or is_auipc or is_jal or is_jalr or is_load \
             or is_op or is_opimm or is_csr
-        rve_viol = (uses_rs1 and rs1 >= 16) or (uses_rs2 and rs2 >= 16) \
-            or (uses_rd and rd >= 16)
-
-        rs1_val = self.regs[rs1] if (uses_rs1 and rs1 < 16) else 0
-        rs2_val = self.regs[rs2] if (uses_rs2 and rs2 < 16) else 0
+        rs1_val = self.regs[rs1] if uses_rs1 else 0
+        rs2_val = self.regs[rs2] if uses_rs2 else 0
         rec["rs1a"], rec["rs1d"] = (rs1, rs1_val) if uses_rs1 else (0, 0)
         rec["rs2a"], rec["rs2d"] = (rs2, rs2_val) if uses_rs2 else (0, 0)
 
@@ -386,9 +386,8 @@ class ISS:
                      or is_load or is_store or is_opimm or is_op or is_fence
                      or (is_csr and not csr_illegal)
                      or (is_system and f3 == 0 and sys_priv_ok))
-        if not decode_ok or rve_viol:
-            # illegal instructions report zero rs fields (RVE violations
-            # would otherwise expose the aliased 4-bit regfile index)
+        if not decode_ok:
+            # illegal instructions report zero rs fields
             rec["rs1a"] = rec["rs1d"] = rec["rs2a"] = rec["rs2d"] = 0
             self.trap_enter(2, rec)
             return rec

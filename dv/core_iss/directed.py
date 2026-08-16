@@ -154,19 +154,40 @@ def t_fetch_fault():
     return body + epilogue(), handler
 
 
-def t_rve():
-    """CPU-RVE-01: any x16..x31 reference in a used field -> illegal."""
-    body = [ADDI(3, 0, 7),
-            ADD(17, 1, 2), ADD(3, 17, 2), ADD(3, 1, 18),
-            ADDI(19, 0, 1), ADDI(3, 20, 1),
-            LUI(22, 1), AUIPC(23, 1),
-            LW(3, 20, 0), LW(21, 1, 0),
-            SW(21, 0, 1), SB(1, 0, 21),
-            JAL(24, 8), JALR(3, 25, 0), JALR(26, 1, 0),
-            BEQ(27, 0, 8), BNE(0, 28, 8),
-            CSRRW(3, 0x340, 29), CSRRW(30, 0x340, 1),
-            CSRRWI(31, 0x340, 5),
-            ADD(3, 3, 3)]                          # still alive afterwards
+def t_rvi():
+    """CPU-RVI-01: x16..x31 are ordinary registers (RV32E -> RV32I, D18).
+
+    This is the inverse of the old CPU-RVE-01, which asserted that any
+    x16..x31 reference trapped. Every field position is exercised — rd, rs1,
+    rs2, store-source, store-base, branch operands, jump link, CSR source —
+    so an accidentally-surviving 4-bit index aliases x16+ onto x0..x15 and
+    diverges from the ISS immediately.
+    """
+    body = []
+    # Distinct values in every high register, so any aliasing shows up as a
+    # wrong operand rather than a coincidentally-equal one.
+    for r in range(16, 32):
+        body += LI32(r, 0xC0DE_0000 | (r << 8) | r)
+
+    body += [ADD(17, 18, 19), SUB(20, 21, 22), XOR(23, 24, 25),
+             SLL(26, 27, 28), SRA(29, 30, 31),
+             ADDI(16, 17, -1), SLTI(18, 19, 100),
+             LUI(20, 0x12345), AUIPC(21, 1)]
+
+    # Loads/stores with a high register as base *and* as data source.
+    body += LI32(16, SCRATCH)
+    body += [SW(17, 0, 16), LW(18, 16, 0),
+             SB(19, 4, 16), LBU(20, 16, 4),
+             SH(21, 8, 16), LHU(22, 16, 8)]
+
+    # Branches on high-register operands (both directions), jump link to a
+    # high register, and a CSR read/write sourced from one.
+    body += [ADDI(23, 0, 5), ADDI(24, 0, 5),
+             BEQ(23, 24, 8), ADDI(25, 0, -1),     # taken -> skips the ADDI
+             BNE(23, 24, 8), ADDI(26, 0, 7),      # not taken -> executes
+             JAL(27, 8), ADDI(28, 0, -1),         # link in x27, skip
+             CSRRW(29, 0x340, 30), CSRRS(31, 0x340, 0),
+             ADD(3, 29, 31)]
     return body + epilogue(), None
 
 
@@ -268,7 +289,7 @@ TESTS = {
     "ls_misaligned": t_ls_misaligned,
     "ls_fault": t_ls_fault,
     "fetch_fault": t_fetch_fault,
-    "rve": t_rve,
+    "rvi": t_rvi,
     "illegal": t_illegal,
     "csr_warl": t_csr_warl,
     "traps_sys": t_traps_sys,

@@ -19,7 +19,9 @@ R_OPS = [ADD, SUB, SLT, SLTU, XOR, OR, AND, SLL, SRL, SRA]
 I_OPS = [ADDI, SLTI, SLTIU, XORI, ORI, ANDI]
 CORNERS = [0, 1, 2, 0xFFFFFFFF, 0xFFFFFFFE, 0x7FFFFFFF, 0x80000000,
            0x80000001, 0x55555555, 0xAAAAAAAA]
-RD_POOL = [0, 1, 2, 3, 4, 6, 7, 8, 9, 10, 11, 12, 13, 15]  # not 14 (base)
+# RV32I: all 32 architectural registers (D18). x14 is the scratch base and
+# x5 is reserved by the epilogue, so neither is a random destination.
+RD_POOL = [r for r in range(32) if r not in (5, 14)]
 
 
 def rnd_rd(rng):
@@ -27,7 +29,7 @@ def rnd_rd(rng):
 
 
 def rnd_rs(rng):
-    return rng.randrange(16)
+    return rng.randrange(32)
 
 
 def t_r(rng):
@@ -101,14 +103,13 @@ def t_trap(rng):
         0x00000000, 0xFFFFFFFF,
         ECALL, EBREAK, FENCEI,
         0x10200073,                                    # sret
-        _r(1, rnd_rs(rng), rnd_rs(rng), 0, rnd_rd(rng) & 0xF, 0x33),  # mul
-        CSRRW(rnd_rd(rng) & 0xF, 0xB00, rnd_rs(rng) & 0xF),  # mcycle
-        CSRRW(rnd_rd(rng) & 0xF, 0xC01, 0),                  # time
+        _r(1, rnd_rs(rng), rnd_rs(rng), 0, rnd_rd(rng), 0x33),  # mul
+        CSRRW(rnd_rd(rng), 0xB00, rnd_rs(rng)),        # mcycle
+        CSRRW(rnd_rd(rng), 0xC01, 0),                  # time
         LW(rnd_rd(rng), 14, off | 1),                  # misaligned load
         SH(rnd_rs(rng), off | 1, 14),                  # misaligned store
-        _r(0, rnd_rs(rng), 16 + rng.randrange(16), 0, rnd_rd(rng) & 0xF,
-           0x33),                                      # RVE violation
-    ]
+    ]                          # (the old RVE-violation bomb is a legal ADD
+                               #  under RV32I and was removed — see D18)
     return [rng.choice(bombs)]
 
 
@@ -142,7 +143,7 @@ TEMPLATES = [
 def gen_body(seed, n_templates):
     rng = random.Random(seed)
     body = LI32(14, SCRATCH)
-    for r in range(1, 16):
+    for r in range(1, 32):
         if r not in (5, 14):
             body += LI32(r, rng.getrandbits(32))
     fns = [t for t, _ in TEMPLATES]

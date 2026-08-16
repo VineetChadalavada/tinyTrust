@@ -1,4 +1,5 @@
-// TinyTrust — RV32E multicycle core (ARCHITECTURE.md §5)
+// TinyTrust — RV32I multicycle core (ARCHITECTURE.md §5; RV32E->RV32I per
+// docs/RETARGET.md D18)
 //
 // One instruction fully retires before the next fetch. Shared-everything
 // datapath (D1): a single adder/subtractor serves PC+4, branch/jump targets,
@@ -179,14 +180,15 @@ module core #(
     wire is_wfi    = (instr == 32'h1050_0073);                     // WFI=NOP
     wire sys_priv_ok = is_ecall | is_ebreak | is_wfi | (is_mret && priv_m_q);
 
-    // RV32E: any reference to x16..x31 in a used register field is illegal
+    // Which register fields this instruction actually reads/writes. Drives the
+    // regfile write enable and the RVFI report. (Under RV32E this also gated
+    // an x16..x31 illegal-instruction check; RV32I has no such restriction —
+    // docs/RETARGET.md D18.)
     wire uses_rs1 = is_op | is_opimm | is_load | is_store | is_branch
                   | is_jalr | (is_csr && !is_csri);
     wire uses_rs2 = is_op | is_store | is_branch;
     wire uses_rd  = is_lui | is_auipc | is_jal | is_jalr | is_load
                   | is_op | is_opimm | is_csr;
-    wire rve_viol = (uses_rs1 && rs1[4]) || (uses_rs2 && rs2[4])
-                  || (uses_rd && rd[4]);
 
     // ------------------------------------------------------------------
     // Register file
@@ -198,11 +200,11 @@ module core #(
     regfile u_regfile (
         .clk    (clk),
         .we     (rf_we),
-        .waddr  (rd[3:0]),
+        .waddr  (rd),
         .wdata  (rd_wdata),
-        .raddr1 (rs1[3:0]),
+        .raddr1 (rs1),
         .rdata1 (rs1_val),
-        .raddr2 (rs2[3:0]),
+        .raddr2 (rs2),
         .rdata2 (rs2_val)
     );
 
@@ -394,7 +396,7 @@ module core #(
                    | is_load | is_store | is_opimm | is_op | is_fence
                    | (is_csr && !csr_illegal)
                    | (is_system && funct3 == 3'b000 && sys_priv_ok);
-    wire illegal = !decode_ok || rve_viol;
+    wire illegal = !decode_ok;
 
     assign csr_commit = state[S_EX] && is_csr && !illegal && csr_do_write;
 

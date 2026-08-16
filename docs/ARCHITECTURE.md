@@ -46,7 +46,7 @@ flowchart LR
 | # | Decision | Alternatives rejected | Rationale |
 |---|---|---|---|
 | D1 | **Multicycle (non-pipelined) core** | 2-stage / 3-stage pipeline | XIP fetch latency (~10–20 cycles/word) dominates CPI; a pipeline's throughput is wasted stalling on fetch while its hazard logic, pipeline registers, and verification surface all cost area. Multicycle allows radical HW reuse (one adder for PC+4 / branch target / AGU / ALU) and has trivially explainable timing. |
-| D2 | **RV32E** (16 registers) | RV32I | 32×32 DFF register file ≈ 1,024 flops — alone larger than the rest of the core. RV32E halves it. GCC/LLVM both support the `rv32e`/ilp32e ABI. |
+| D2 | ~~**RV32E** (16 registers)~~ **REVERSED 2026-08-16 → RV32I** | RV32I | *Original rationale:* 32×32 DFF register file ≈ 1,024 flops — alone larger than the rest of the core; RV32E halves it; GCC/LLVM both support `rv32e`/ilp32e. **Superseded by [RETARGET.md](RETARGET.md) D18**: the area argument was an artefact of the 16-tile budget, which no longer applies on a full die. RV32I also deletes the `rv32e_ok` assumption from the formal wrapper. |
 | D3 | **DFF register file** (v1) | SKY130 latch-based file | Latch file ~halves regfile area but complicates STA, hold closure, and formal setup. Kept as the designated fallback if the trim ladder is exhausted. |
 | D4 | **No C extension in v1** (stretch goal, decide at M1 with data) | RV32EC | C cuts fetch traffic ~30 % (real win given XIP), but costs an aligner + expander (~0.8–1 kGE) and complicates riscv-formal timing. Revisit once calibrated synthesis numbers exist. |
 | D5 | **Iterative 1-bit/cycle shifter** | 32-bit barrel shifter | Barrel ≈ 0.6–0.8 kGE. Worst-case 31 extra cycles per shift is invisible next to fetch cost. |
