@@ -99,33 +99,54 @@ Pin count, not gates, drives die size from here.
 
 Minimum MPW area is 0.8 mm², so there is no "too small" risk either.
 
-### First measured sg13g2 numbers — 2026-08-28
+### Measured sg13g2 numbers — P1, 2026-08-28
 
-Not the full P1 recalibration (`run_calibration.py` has still not been re-run),
-but the *existing* v1 core has now been synthesised against the real platform
-liberty for the first time — `yosys` → `sg13g2_stdcell_typ_1p20V_25C.lib`,
-NAND2 = 7.2576 µm², `core.v` + `regfile.v` + `pmp.v`, no area-effort tuning:
+`synth/calibration/calibrate_sg13g2.py` replaces `run_calibration.py` for v2:
+real Yosys + ABC liberty mapping against `sg13g2_stdcell_typ_1p20V_25C.lib`
+(1 GE = `sg13g2_nand2_1` = 7.2576 µm²), not the old ABC-free primitive
+pricing. The v1 script is kept for the v1 record but its numbers are both
+SKY130 and pre-D18 (it reports `regfile = 480 flops`, i.e. RV32E).
 
-| | area | GE | flops | port bits |
-|---|---|---|---|---|
-| core, RVFI port compiled in | 174,960 µm² | 24,107 | 1,963 | 492 |
-| **core, RVFI guarded out** | **137,667 µm²** | **18,969** | **1,419** | **109** |
+| block | area µm² | kGE | flops | v1 SKY130 estimate | delta |
+|---|---|---|---|---|---|
+| **core** (incl. regfile + pmp) | 137,667 | **18.97** | 1,419 | — | — |
+| ├ regfile, standalone | 92,947 | 12.81 | 992 | 6.96 (RV32E) | +84% ¹ |
+| └ pmp, standalone | 10,877 | 1.50 | 112 | 2.54 | −41% |
+| ascon_p | 50,157 | 6.91 | 325 | 9.52 | −27% |
+| bootrom | 6,793 | 0.94 | 0 | 2.15 | −56% |
+| **top-level total** | **194,618** | **26.82** | | | |
 
-Two things this changes:
+¹ Not comparable directly: v1 measured RV32E (15 registers), this is RV32I
+(31). The register file *flops* alone are 48,611 µm² = 6.7 kGE; the other
+6.1 kGE is read multiplexing, which partly folds into surrounding logic when
+synthesised inside `core` rather than standalone. Do not add the regfile and
+pmp rows to `core` — they are already inside it.
 
-1. **The §4 per-core estimate of 10–14 kGE is optimistic.** The *multicycle*
-   core measures **18.9 kGE** — above the band budgeted for the 5-stage
-   pipelined one. Roughly 6.7 kGE of that is the RV32I register file (992
-   flops), which is D18's cost now measured rather than projected. Whatever
-   the pipeline adds, it adds on top of 18.9, so the "2 × core = 20–28 kGE"
-   row should be treated as a floor, not a range.
-2. **RVFI was 21% of core area and 383 of 492 pin bits.** It is now wrapped
-   in `` `ifdef RISCV_FORMAL `` (see `pd/designs/tinytrust_core/config.mk`),
-   which is why the P0 harden runs on the 137,667 µm² netlist.
+The three blocks that *are* comparable all came in 27–56% **below** the v1
+estimate, which is what `run_calibration.py`'s own header predicted ("expect
+the real flow to come in ~10–30% lower"), plus the sky130 → sg13g2 change.
 
-Still estimates until P1: everything else in §4, and every number here moves
-once the flow applies real timing constraints.
+**What this changes in the table above:**
 
+1. **The 10–14 kGE per-core budget is too low.** The *multicycle* core
+   measures **18.97 kGE**; whatever the 5-stage pipeline adds, it adds on top.
+   Treat "2 × core = 20–28 kGE" as a floor of ~38 kGE, not a range.
+2. **The ~15 kGE security-SoC row is optimistic but not yet disproven.**
+   Measured so far: ascon_p 6.91 + bootrom 0.94 = 7.85 kGE. QSPI, UART, GPIO
+   and the timer are still unwritten RTL, so the rest of that row remains an
+   estimate.
+3. **Everything still fits comfortably.** Even at ~40 kGE of cores plus caches
+   and coherence, the P0 harden shows the v1 core alone occupying 0.41 mm² of
+   core area at 42% utilization — the die stays pad-limited, exactly as §4
+   assumed. No architectural consequence; the numbers just stop being guesses.
+
+RVFI is excluded from every figure here (`` `ifdef RISCV_FORMAL ``): leaving
+the retire port in costs 21% of core area (174,960 → 137,667 µm²), 544 flops,
+and 383 of 492 port bits. See `pd/designs/tinytrust_core/config.mk`.
+
+Still outstanding for P1: nothing above covers the SRAM macros, whose area
+comes from the PDK and is measured when the cache architecture is committed
+(P3).
 
 ---
 

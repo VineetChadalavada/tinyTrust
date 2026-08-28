@@ -1,5 +1,13 @@
 # Calibration Synthesis Report — 2026-07-14
 
+> **SUPERSEDED for v2 (2026-08-28).** This report answers a Tiny Tapeout tile
+> question that no longer applies (see `docs/RETARGET.md` D11/D12), on SKY130,
+> using ABC-free primitive pricing, against an RV32E register file from before
+> D18. It is kept because it is the basis of the tile budget in
+> ARCHITECTURE.md §10 and the reasoning still stands on its own terms.
+> For current numbers use `calibrate_sg13g2.py` → `results_sg13g2.json`
+> (real ABC liberty mapping against ihp-sg13g2), summarised in RETARGET.md §4.
+
 **Question:** how many Tiny Tapeout tiles does TinyTrust actually need?
 (Requirements hoped 4×2 = 8 tiles; architecture spec §10 predicted overflow.)
 
