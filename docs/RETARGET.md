@@ -99,6 +99,34 @@ Pin count, not gates, drives die size from here.
 
 Minimum MPW area is 0.8 mm², so there is no "too small" risk either.
 
+### First measured sg13g2 numbers — 2026-08-28
+
+Not the full P1 recalibration (`run_calibration.py` has still not been re-run),
+but the *existing* v1 core has now been synthesised against the real platform
+liberty for the first time — `yosys` → `sg13g2_stdcell_typ_1p20V_25C.lib`,
+NAND2 = 7.2576 µm², `core.v` + `regfile.v` + `pmp.v`, no area-effort tuning:
+
+| | area | GE | flops | port bits |
+|---|---|---|---|---|
+| core, RVFI port compiled in | 174,960 µm² | 24,107 | 1,963 | 492 |
+| **core, RVFI guarded out** | **137,667 µm²** | **18,969** | **1,419** | **109** |
+
+Two things this changes:
+
+1. **The §4 per-core estimate of 10–14 kGE is optimistic.** The *multicycle*
+   core measures **18.9 kGE** — above the band budgeted for the 5-stage
+   pipelined one. Roughly 6.7 kGE of that is the RV32I register file (992
+   flops), which is D18's cost now measured rather than projected. Whatever
+   the pipeline adds, it adds on top of 18.9, so the "2 × core = 20–28 kGE"
+   row should be treated as a floor, not a range.
+2. **RVFI was 21% of core area and 383 of 492 pin bits.** It is now wrapped
+   in `` `ifdef RISCV_FORMAL `` (see `pd/designs/tinytrust_core/config.mk`),
+   which is why the P0 harden runs on the 137,667 µm² netlist.
+
+Still estimates until P1: everything else in §4, and every number here moves
+once the flow applies real timing constraints.
+
+
 ---
 
 ## 5. Verification impact

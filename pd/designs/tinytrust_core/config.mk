@@ -34,9 +34,21 @@ export PLACE_DENSITY_LB_ADDON = 0.2
 export TNS_END_PERCENT        = 100
 export CTS_BUF_DISTANCE       = 60
 export SWAP_ARITH_OPERATORS   = 1
+# Required by SWAP_ARITH_OPERATORS — synth_odb.tcl hard-errors without it.
+# The reference riscv32i config sets both; omitting this one killed the first
+# P0 flow attempt at stage 1_synth (2026-08-28).
+export OPENROAD_HIERARCHICAL   = 1
 
-# NOTE (P0 caveat, real work item for P2): core.v exports the full RVFI port
-# unconditionally — ~350 bits of rvfi_* outputs that exist only for
-# verification. They must never reach a taped-out netlist. For this flow smoke
-# test they simply become pins and inflate the pin count; before any real
-# hardening, wrap them in `ifdef RISCV_FORMAL` so synthesis drops them.
+# RVFI: core.v's retire port is wrapped in `ifdef RISCV_FORMAL (2026-08-28),
+# so this flow — which does not define it — synthesises the lean core. The
+# guard was moved ahead of P0 rather than left to P2 because the cost was
+# measured, not guessed (yosys + sg13g2_stdcell_typ_1p20V_25C):
+#
+#              area           flops   ports  port bits
+#   RVFI in    174,960 um^2   1,963      34        492
+#   RVFI out   137,667 um^2   1,419      13        109
+#              -21.3%          -544     -21       -383
+#
+# 383 of 492 pin bits is the part that mattered: hardening with the port left
+# in produces a die sized by verification-only pins, so neither the area
+# numbers nor the render would describe anything that could tape out.

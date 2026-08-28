@@ -36,7 +36,12 @@ def setup_path():
 def compile_rtl():
     os.makedirs(OUT, exist_ok=True)
     vvp = os.path.join(OUT, "sim.vvp")
-    subprocess.run(["iverilog", "-g2005", "-o", vvp] + RTL, check=True)
+    # -DRISCV_FORMAL: core.v's RVFI retire port is guarded so it stays out of
+    # synthesis/P&R builds (it is 21% of core area). The lockstep check reads
+    # that port, so the co-sim build must define it exactly as riscv-formal's
+    # generated defines.sv does.
+    subprocess.run(["iverilog", "-g2005", "-DRISCV_FORMAL", "-o", vvp] + RTL,
+                   check=True)
     return vvp
 
 

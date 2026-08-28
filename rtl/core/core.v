@@ -46,9 +46,15 @@ module core #(
     input  wire        irq_external,
 
     // fault hardening (§5.5): sticky until reset
-    output wire        fsm_fault,
+    output wire        fsm_fault
 
-    // RVFI retire interface
+    // RVFI retire interface. Verification-only, so it is compiled out of
+    // synthesis and P&R builds: left in, it costs ~5.2 kGE (21% of core
+    // area) and 383 of 492 port bits on sg13g2 typ. riscv-formal defines
+    // RISCV_FORMAL in its generated defines.sv; the ISS co-sim passes
+    // -DRISCV_FORMAL to iverilog. See docs/RETARGET.md milestone P0.
+`ifdef RISCV_FORMAL
+    ,
     output reg         rvfi_valid,
     output reg  [63:0] rvfi_order,
     output reg  [31:0] rvfi_insn,
@@ -70,10 +76,13 @@ module core #(
     output reg  [3:0]  rvfi_mem_wmask,
     output reg  [31:0] rvfi_mem_rdata,
     output reg  [31:0] rvfi_mem_wdata
+`endif
 );
 
+`ifdef RISCV_FORMAL
     assign rvfi_halt = 1'b0;
     assign rvfi_ixl  = 2'b01;
+`endif
 
     // ------------------------------------------------------------------
     // FSM: one-hot with validity check (§5.5 / UAR-FSM-01). Any non-one-hot
@@ -479,6 +488,7 @@ module core #(
             cap_mem_wdata <= 32'd0;
             cap_mem_rmask <= 4'd0;
             cap_mem_wmask <= 4'd0;
+`ifdef RISCV_FORMAL
             rvfi_valid    <= 1'b0;
             rvfi_order    <= 64'd0;
             rvfi_insn     <= 32'd0;
@@ -498,8 +508,11 @@ module core #(
             rvfi_mem_wmask <= 4'd0;
             rvfi_mem_rdata <= 32'd0;
             rvfi_mem_wdata <= 32'd0;
+`endif
         end else begin
+`ifdef RISCV_FORMAL
             rvfi_valid <= 1'b0;
+`endif
 
             if (fsm_fault_now) begin
                 // §5.5: corrupted control state → forced trap, sticky alert.
@@ -677,6 +690,7 @@ module core #(
                             priv_m_shadow <= mpp_m;
                             mpp_m         <= 1'b0;
                         end
+`ifdef RISCV_FORMAL
                         rvfi_valid     <= 1'b1;
                         rvfi_order     <= order_cnt;
                         order_cnt      <= order_cnt + 64'd1;
@@ -699,6 +713,7 @@ module core #(
                         rvfi_mem_wmask <= cap_mem_wmask;
                         rvfi_mem_rdata <= cap_mem_rdata;
                         rvfi_mem_wdata <= cap_mem_wdata;
+`endif
                         state <= ST_FETCH;
                     end
                 end
@@ -713,6 +728,7 @@ module core #(
                     priv_m_q      <= 1'b1;
                     priv_m_shadow <= 1'b1;
                     pc            <= {mtvec_base, 4'd0};
+`ifdef RISCV_FORMAL
                     if (!trap_irq) begin
                         // synchronous exception: the instruction retires
                         // with rvfi_trap=1 and no architectural effect
@@ -743,6 +759,7 @@ module core #(
                         rvfi_mem_rdata <= 32'd0;
                         rvfi_mem_wdata <= 32'd0;
                     end
+`endif
                     intr_flag <= 1'b1;
                     state     <= ST_FETCH;
                 end
