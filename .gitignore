@@ -23,3 +23,6 @@ dv/core_iss/out/
 dv/formal/riscv-formal/
 dv/formal/toolshim/
 *.vvp
+
+# generated PDK liberty copies (see pd/designs/sram_smoke/patch_sram_lib.sh)
+pd/designs/sram_smoke/lib/

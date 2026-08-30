@@ -65,7 +65,7 @@ directed + 12/12 random, 45,612 instructions, 0 mismatches.
 | # | Decision | Alternatives rejected | Rationale |
 |---|---|---|---|
 | D11 | **Full custom die (~2×2 mm), not Tiny Tapeout** | 16-tile TT; larger TT tile counts | Own calibration numbers: 1 tile = 2,344 GE, 16 tiles = 37.5 kGE. A single 256 B flop-based cache = 10.9 kGE = 4.7 tiles. Two cores' caches alone exceed the entire budget. Coherence is not expressible in TT. |
-| D12 | **IHP SG13G2 130 nm** | SKY130 via ChipFoundry chipIgnite | (a) €2,400–3,500 open-source MPW vs. $14,950; (b) **ships single-port SRAM macros** (`RM_IHPSG13_1P_1024x8/32/64`, `4096x8`) — SKY130's open SRAM path is DIY; (c) hft-chip proved the exact flow, and the Croc SoC pad ring is adaptable. Cost: re-run area calibration against sg13g2 std cells. |
+| D12 | **IHP SG13G2 130 nm** | SKY130 via ChipFoundry chipIgnite | (a) €2,400–3,500 open-source MPW vs. $14,950; (b) **ships single-port SRAM macros** (widths 8/16/48/64 bits, depths 64…4096 — see the P3 note in §4; the `x32` named here at proposal time does not exist) — SKY130's open SRAM path is DIY; (c) hft-chip proved the exact flow, and the Croc SoC pad ring is adaptable. Cost: re-run area calibration against sg13g2 std cells. |
 | D13 | **5-stage pipeline** (IF/ID/EX/MEM/WB), full forwarding, 1-cycle load-use stall | 3-stage; 2-stage; keep multicycle | Classic 5-stage is the most-verified structure in existence, has a canonical reference implementation, and is what the ISS/riscv-formal setup already targets via RVFI. Depth beyond 5 buys nothing at 130 nm where the critical path is SRAM access. |
 | D14 | **2 cores**, symmetric | 4 cores; 1 core + accelerator | 2 cores exercise every MESI/MOESI transition including the O-state transfer that distinguishes them. 4 cores multiply verification cost and pad/area without adding a single new protocol state. Bus arbiter stays parameterizable to N. |
 | D15 | **Snooping coherence on a shared bus** | Directory-based; MSI only | At 2 cores a directory is pure overhead — snooping is the correct engineering answer and the one that makes MOESI's Owned state meaningful (cache-to-cache dirty transfer without writeback). |
@@ -91,7 +91,7 @@ sg13g2 liberty file.** Treat every number below as ±30%.
 | Shared bus, arbiter, snoop broadcast | 3–5 | |
 | v1 security SoC (ASCON 7.3 + PMP + ROM + QSPI + UART/GPIO/timer) | ~15 | measured or projected in v1 |
 | **Total logic** | **56–78 kGE** | ≈ **0.21–0.29 mm²** of standard cells |
-| SRAM macros: 4 × `RM_IHPSG13_1P_1024x32` (4 KiB each) | — | macro area from PDK; **TBD** |
+| SRAM macros: 4 × `RM_IHPSG13_1P_512x64` (4 KiB each) | — | **150,102 µm² = 20.68 kGE each; 4 × = 0.60 mm²** (measured 2026-08-30, see below) |
 
 At 55% utilization the core lands around **0.4–0.55 mm² plus macros** —
 comfortably inside a 2×2 mm die. **The die will be pad-limited, not
@@ -183,6 +183,47 @@ Three notes on the deltas:
 
 ---
 
+### Measured SRAM macro numbers — pre-P3, 2026-08-30
+
+From the macro smoke test (`pd/results/sram_smoke/METRICS.md`), which retires
+the §8 GDS-merge risk that P0 deferred. Two corrections to the assumptions
+above, both material to P3:
+
+**The geometry in D12 and in the table above was wrong.** There is no
+`RM_IHPSG13_1P_1024x32`. The platform ships ten single-port macros with widths
+of 8, 16, 48 and 64 bits and depths of 64, 256, 512, 1024, 2048 and 4096. A
+4 KiB array is `RM_IHPSG13_1P_512x64`, not `1024x32`. Cache line and array
+geometry at P3 has to be chosen from what exists.
+
+**SRAM area is no longer TBD, and it is the largest single line item.**
+
+| | value |
+|---|---|
+| `RM_IHPSG13_1P_512x64` (4 KiB) | 784.48 × 191.34 µm = **150,102 µm² = 20.68 kGE** |
+| 4 × 4 KiB (the §4 budget) | **0.60 mm²** |
+| for comparison, `core_p5` | 179,684 µm² = 24.76 kGE |
+
+One 4 KiB SRAM is 0.83× the area of the entire 5-stage core. Four of them is
+0.60 mm², against the 0.4–0.55 mm² §4 projected for *all* standard-cell logic.
+The die stays comfortable — 0.6 + ~0.55 ≈ 1.15 mm² on a 4 mm² die, still
+pad-limited — but SRAM, not logic, now sets the core area, and cache capacity
+is the biggest area lever P3 has.
+
+Two more properties to design against:
+
+- **Power.** The macro is 66.6% of total power in a design that is one SRAM
+  plus a handful of registers (3.62 mW of 5.43 mW).
+- **Hold.** The macro declares a 0.39 ns library hold time on its data inputs,
+  large next to a standard cell. Every flop feeding a cache array will start
+  hold-critical and needs margin budgeted.
+
+And one defect to carry: every `RM_IHPSG13_*` Liberty in the platform declares
+`capacitive_load_unit (1,pf)` and then `max_capacitance : 6.4e-14` — the value
+written in farads under a picofarad unit, off by 1e12 — which aborts OpenROAD
+global placement (RSZ-0169) and cannot be overridden from SDC.
+`pd/designs/sram_smoke/patch_sram_lib.sh` corrects a local copy; upstream
+report pending.
+
 ## 5. Verification impact
 
 The existing verification stack survives and mostly still applies:
@@ -263,7 +304,7 @@ discovering at P6 that the design cannot be hardened.
 | Risk | Mitigation |
 |---|---|
 | IHP MPW slot availability and true open-source pricing | Contact IHP directly with the Open Source Request before P2; pricing quoted (€2,400–3,500) is from public schedules and unconfirmed for this design size |
-| SG13G2 SRAM macros + OpenROAD GDS merge issues | Macro-only smoke test at P0, before cache architecture is committed |
+| SG13G2 SRAM macros + OpenROAD GDS merge issues | **RETIRED 2026-08-30** — the smoke test P0 deferred was finally run (`pd/results/sram_smoke/METRICS.md`): a 4 KiB macro hardens to GDS with 0 router DRC. The BITKIT missing-GDS cells are real but current ORFS already absorbs them via the platform's own `GDS_ALLOW_EMPTY`. Three integration problems had to be solved first, one of them a genuine PDK Liberty defect — see §4 and the metrics file. |
 | Docker allocated only 8 GB RAM | Full-chip P&R may need more; raise WSL2 memory limit before P6 |
 | Coherence verification scope underestimated | It always is. P4/P5 have the loosest estimates in this plan. |
 | Solo project, tape-out has a hard deadline | Unlike v1, a missed shuttle slot costs months. Book the slot *after* P5, not before. |
