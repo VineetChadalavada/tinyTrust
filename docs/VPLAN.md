@@ -130,6 +130,16 @@ yet).*
 | UAR-BUS-01 | Exactly one outstanding transaction; valid stable until ready | SVA |
 | UAR-RVFI-01 | riscv-formal insn/reg/PC/mem channel consistency (catches whole bug classes) | F |
 | UAR-TIME-01 | Instruction never retires twice / lost on trap | F |
+| CPU-FWD-01 | 5-stage core: an EX operand is the architectural value under every forwarding path, **including while EX is held across a data-bus stall** | F (`reg_ch0`) + directed `fwd_stall` with `+fastmem` |
+| CPU-SER-01 | 5-stage core: SYSTEM (CSR/MRET/ECALL/EBREAK/WFI) is serialized and the pipeline is flushed behind it, so no instruction executes under a stale privilege or PMP configuration | directed `csr_warl` / `traps_sys` + `mmode_safe` formal env |
+
+**Note on the two cores (P2).** `rtl/core/core.v` (multicycle) and
+`rtl/core/core_p5.v` (5-stage) implement the same architecture and are held to
+the same bar: both run the whole of §3.1–§3.3 against the same ISS, and both
+have a riscv-formal config (`dv/formal/tinytrust`, `dv/formal/tinytrust_p5`)
+that must close 44/44. The pipeline adds CPU-FWD-01 and CPU-SER-01, which have
+no multicycle equivalent — nothing is ever in flight there to forward to or
+overtake.
 
 ## 4. Feature → testpoint matrix: blocks & SoC (L1/L3)
 
@@ -195,7 +205,14 @@ writing here — never silently accepted.
 ## 6. Regression & CI
 
 - `dv/regress.ps1` (local): ascon_kat + core directed + smoke SoC test; must
-  pass before every commit touching rtl/ or rom/.
+  pass before every commit touching rtl/ or rom/. The core leg runs three
+  configurations — multicycle, 5-stage, and 5-stage with `+fastmem` — because
+  the first two share a timing shape that makes some pipeline states
+  unreachable (BUG-005): through the timed memory model a fetch costs at least
+  three cycles, so consecutive instructions are never closer than three
+  pipeline stages apart. `+fastmem` makes the instruction port zero-wait-state
+  while leaving the data port timed, which is both the state space the timed
+  model cannot reach and a preview of the I$ timing arriving at P3.
 - GitHub Actions (on push): full matrix — Icarus directed suites, Verilator
   coverage build, riscv-formal SBY jobs, random-stream co-sim (Spike),
   nightly long-random seed sweep. Badge in README.

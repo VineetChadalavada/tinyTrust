@@ -9,7 +9,33 @@
 // Bus latency is randomized (2 .. 2+maxlat cycles) to stress the
 // valid/ready handshake and the FSM wait states.
 //
+// One TB serves both cores so the CPI comparison in docs/RETARGET.md §P2 is
+// measured on an identical memory model, identical stimulus and an identical
+// trace format. Compile with -DCORE_P5 for the 5-stage core (rtl/core/
+// core_p5.v), without it for the multicycle core (rtl/core/core.v). The
+// 5-stage core has split instruction and data ports; a fixed-priority
+// arbiter (data over fetch, grant locked for the duration of a transaction)
+// folds them back onto the single-port model, which is what the unified
+// memory of the current SoC actually looks like. P3 replaces the arbiter
+// with an I$ and a D$.
+//
+// +fastmem=1 (5-stage core only) makes the *instruction* port zero-wait-state
+// — ready and rdata combinational — while leaving the data port on the timed
+// model. This is not cosmetic. Through the shared timed model a fetch costs a
+// minimum of three cycles, so consecutive instructions are never closer than
+// three pipeline stages apart, and a whole class of pipeline states is
+// unreachable in simulation: notably a consumer pinned in EX across a data
+// stall while its producer sits in WB, which is where BUG-005 lived.
+// riscv-formal reaches those states freely because it drives ready as a free
+// variable; this mode lets the co-sim reach them too, and is what an I$ hit
+// in front of slower data memory will look like at P3. Making the *data* port
+// fast as well would defeat the purpose — with no data stall the pipeline
+// never holds an instruction in EX at all. Not the default: the randomized
+// timed model is still the stronger handshake stress, so regress.ps1 runs
+// both.
+//
 // Plusargs: +prog=<hex> +trace=<out> [+seed=N] [+maxcycles=N] [+maxlat=N]
+//           [+fastmem=1]
 
 `timescale 1ns/1ps
 
@@ -27,6 +53,13 @@ module tb_core;
     reg         bus_fault;
     wire        fsm_fault;
 
+    // 64 KiB backing store. Declared up here because the +fastmem instruction
+    // path reads it from a continuous assign below, and Verilog needs a memory
+    // declared ahead of its use.
+    reg [31:0] ram [0:16383];
+
+    integer fast_mem = 0;   // from +fastmem; settled before reset releases
+
     wire        rvfi_valid;
     wire [63:0] rvfi_order;
     wire [31:0] rvfi_insn;
@@ -39,6 +72,95 @@ module tb_core;
     wire [3:0]  rvfi_mem_rmask, rvfi_mem_wmask;
     wire [31:0] rvfi_mem_rdata, rvfi_mem_wdata;
 
+`ifdef CORE_P5
+    // ---------------- 5-stage core: split I/D ports + arbiter -------------
+    wire        imem_valid, dmem_valid;
+    wire [31:0] imem_addr, dmem_addr, dmem_wdata;
+    wire [3:0]  dmem_wstrb;
+
+    reg  arb_busy, arb_grant_d;   // grant is locked for the whole transaction
+    // With +fastmem the instruction port is served combinationally below and
+    // never touches the shared model, so the data port simply owns it.
+    wire sel_d = (fast_mem != 0) ? 1'b1
+                                 : (arb_busy ? arb_grant_d : dmem_valid);
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            arb_busy    <= 1'b0;
+            arb_grant_d <= 1'b0;
+        end else if (arb_busy) begin
+            if (bus_ready) arb_busy <= 1'b0;
+        end else if (imem_valid || dmem_valid) begin
+            arb_busy    <= 1'b1;
+            arb_grant_d <= dmem_valid;
+        end
+    end
+
+    assign bus_valid    = (fast_mem != 0) ? dmem_valid
+                                          : (imem_valid | dmem_valid);
+    assign bus_addr     = sel_d ? dmem_addr  : imem_addr;
+    assign bus_wdata    = dmem_wdata;
+    assign bus_wstrb    = sel_d ? dmem_wstrb : 4'd0;
+    assign bus_is_fetch = ~sel_d;
+
+    // zero-wait-state instruction path (+fastmem). Fetches never write, so
+    // the shared model's write and TOHOST side effects are untouched by this.
+    wire i_in_ram = (imem_addr <  32'h0001_0000);
+    wire i_in_th  = (imem_addr == 32'h0001_0000);
+
+    wire        imem_ready = (fast_mem != 0) ? 1'b1 : (bus_ready & ~sel_d);
+    wire [31:0] imem_rdata = (fast_mem != 0)
+                             ? (i_in_ram ? ram[imem_addr[15:2]] : 32'd0)
+                             : bus_rdata;
+    wire        imem_fault = (fast_mem != 0) ? (!i_in_ram && !i_in_th)
+                                             : bus_fault;
+    wire        dmem_ready = (fast_mem != 0) ? bus_ready
+                                             : (bus_ready & sel_d);
+
+    core_p5 dut (
+        .clk            (clk),
+        .rst_n          (rst_n),
+        .imem_valid     (imem_valid),
+        .imem_addr      (imem_addr),
+        .imem_ready     (imem_ready),
+        .imem_rdata     (imem_rdata),
+        .imem_fault     (imem_fault),
+        .dmem_valid     (dmem_valid),
+        .dmem_addr      (dmem_addr),
+        .dmem_wdata     (dmem_wdata),
+        .dmem_wstrb     (dmem_wstrb),
+        .dmem_ready     (dmem_ready),
+        .dmem_rdata     (bus_rdata),
+        .dmem_fault     (bus_fault),
+        .irq_timer      (1'b0),
+        .irq_external   (1'b0),
+        .fsm_fault      (fsm_fault),
+        .rvfi_valid     (rvfi_valid),
+        .rvfi_order     (rvfi_order),
+        .rvfi_insn      (rvfi_insn),
+        .rvfi_trap      (rvfi_trap),
+        .rvfi_halt      (rvfi_halt),
+        .rvfi_intr      (rvfi_intr),
+        .rvfi_mode      (rvfi_mode),
+        .rvfi_ixl       (rvfi_ixl),
+        .rvfi_rs1_addr  (rvfi_rs1_addr),
+        .rvfi_rs2_addr  (rvfi_rs2_addr),
+        .rvfi_rs1_rdata (rvfi_rs1_rdata),
+        .rvfi_rs2_rdata (rvfi_rs2_rdata),
+        .rvfi_rd_addr   (rvfi_rd_addr),
+        .rvfi_rd_wdata  (rvfi_rd_wdata),
+        .rvfi_pc_rdata  (rvfi_pc_rdata),
+        .rvfi_pc_wdata  (rvfi_pc_wdata),
+        .rvfi_mem_addr  (rvfi_mem_addr),
+        .rvfi_mem_rmask (rvfi_mem_rmask),
+        .rvfi_mem_wmask (rvfi_mem_wmask),
+        .rvfi_mem_rdata (rvfi_mem_rdata),
+        .rvfi_mem_wdata (rvfi_mem_wdata)
+    );
+`else
+    // ---------------- multicycle core: single unified port ----------------
+    // +fastmem has no meaning here: this core has one port and one access in
+    // flight, so there is no fetch/data timing split to make.
     core dut (
         .clk            (clk),
         .rst_n          (rst_n),
@@ -75,8 +197,7 @@ module tb_core;
         .rvfi_mem_rdata (rvfi_mem_rdata),
         .rvfi_mem_wdata (rvfi_mem_wdata)
     );
-
-    reg [31:0] ram [0:16383];
+`endif
 
     integer seed, max_lat, max_cycles;
     integer delay;
@@ -145,17 +266,20 @@ module tb_core;
                 rvfi_mem_addr, rvfi_mem_rmask, rvfi_mem_wmask,
                 rvfi_mem_rdata, rvfi_mem_wdata);
             if (tohost_armed) begin
-                $display("COSIM DONE tohost=%08x retired=%0d", tohost_val,
-                         rvfi_order + 1);
+                $display("COSIM DONE tohost=%08x retired=%0d cycles=%0d",
+                         tohost_val, rvfi_order + 1, cycles);
                 $fclose(trace_fd);
                 $finish;
             end
         end
     end
 
+`ifndef CORE_P5
     // CPU-SHIFT-01 cycle-count clause: the iterative shifter must spend
     // exactly shamt cycles in S_SHIFT (shamt = 0 takes none). The RVFI
     // trace compare is untimed, so this is checked directly per retire.
+    // The 5-stage core replaces the iterative shifter with a single-cycle
+    // barrel shifter (reverses D5), so the clause does not apply to it.
     integer shift_cycles;
     reg [4:0] exp_shamt;
     reg       is_shift_ret;
@@ -189,6 +313,7 @@ module tb_core;
             end
         end
     end
+`endif
 
     always @(posedge clk) begin
         if (fsm_fault) begin
@@ -219,6 +344,7 @@ module tb_core;
         if (!$value$plusargs("seed=%d", seed))          seed = 1;
         if (!$value$plusargs("maxcycles=%d", max_cycles)) max_cycles = 5000000;
         if (!$value$plusargs("maxlat=%d", max_lat))     max_lat = 3;
+        if (!$value$plusargs("fastmem=%d", fast_mem))   fast_mem = 0;
         for (i = 0; i < 16384; i = i + 1)
             ram[i] = 32'd0;
         $readmemh(prog_file, ram);

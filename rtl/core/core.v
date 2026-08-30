@@ -349,12 +349,18 @@ module core #(
         .csr_rdata_addr1 (pmp_a1_rd),
         .csr_rdata_addr2 (pmp_a2_rd),
         .csr_rdata_addr3 (pmp_a3_rd),
+        .priv_m          (priv_m_q),
         .chk_addr        (state[S_FETCH] ? pc[31:2] : addr_r[31:2]),
         .chk_r           (state[S_MEM] && is_load),
         .chk_w           (state[S_MEM] && is_store),
         .chk_x           (state[S_FETCH]),
-        .priv_m          (priv_m_q),
-        .allow           (pmp_allow)
+        .allow           (pmp_allow),
+        // second check port is for the 5-stage core's concurrent IF check
+        // (rtl/core/core_p5.v); only one access exists at a time here, so it
+        // is tied off and yosys trims the unused checker.
+        .chk2_addr       (30'd0),
+        .chk2_x          (1'b0),
+        .allow2          ()
     );
 
     // ------------------------------------------------------------------

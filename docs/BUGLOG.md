@@ -109,3 +109,115 @@ Mandatory fields: symptom, root cause, fix commit, regression test, found-by.
   per-check `status` files after a killed run left both visible. Lesson: a
   pass/fail reporter must key on the tool's semantic verdict, never its exit
   code, whenever `expect` can make failure a zero-exit outcome.
+
+---
+
+## BUG-004 — SRA/SRAI in the 5-stage core shifted logically, not arithmetically
+
+- **Status:** fixed
+- **Label:** bug/rtl (language semantics, not a design mistake — the intent
+  was right and the operator was right; Verilog's typing rules quietly
+  changed what the operator meant)
+- **Symptom:** on the first lockstep run of `core_p5`, 3 of 16 directed tests
+  failed (`arith_r`, `shift_imm`, `rvi`) and every mismatch was an SRA or
+  SRAI on a negative operand. `SRAI x6, x8, 1` with `x8 = 0x80000000` retired
+  `rd = 0x40000000` where the ISS said `0xC0000000`; the sign bit was not
+  replicated. Every other instruction class passed, including SRL/SRLI and
+  the signed compares SLT/SLTI/BLT/BGE.
+- **Root cause (5 whys):** the ALU wrote the shift as
+  `alu_res = e_insn[30] ? ($signed(ex_rs1) >>> shamt) : (ex_rs1 >> shamt);`
+  In Verilog, a conditional expression's two arms are brought to a *common*
+  type, and if either operand is unsigned the whole expression is unsigned —
+  and that signedness then propagates **back down into the operands**. So
+  `ex_rs1 >> shamt` (unsigned) forced `$signed(ex_rs1)` back to unsigned, and
+  `>>>` on an unsigned operand is defined as a *logical* shift. The `$signed`
+  cast was still there, still readable, and did nothing. Why the signed
+  compares survived the same file: they sit inside a concatenation
+  (`{31'd0, ($signed(a) < $signed(b))}`), where each operand is
+  self-determined, so no unsigned sibling was there to demote them.
+  Why it did not appear in the multicycle core: `core.v` shifts iteratively,
+  one bit per cycle, with the sign bit spliced in explicitly
+  (`{instr[30] & result[31], result[31:1]}`) — no `>>>`, so no typing rule to
+  fall foul of. The bug was created by the P2 barrel shifter (D5 reversed).
+- **Fix (this commit) — `rtl/core/core_p5.v`:** compute the arithmetic shift
+  in its own signed wire, `wire signed [31:0] sra_res = $signed(ex_rs1) >>>
+  shamt;`, where the assignment context is signed and nothing can demote it,
+  and select it in the ternary. Comment at the site records why the obvious
+  inline form is wrong.
+- **Regression test:** existing `dv/core_iss` `arith_r` / `shift_imm` / `rvi`
+  directed tests (which caught it), plus `insn_sra_ch0` / `insn_srai_ch0` in
+  the riscv-formal suite, which prove it over all operands rather than the
+  sampled ones.
+- **Found-by:** ISS lockstep co-sim (L2) on the very first `core_p5` run —
+  before the pipeline had seen a single formal check. Reinforces the same
+  lesson as BUG-001: the golden model was written from the spec, so it had no
+  reason to make the same mistake. Worth noting that a directed test that
+  only shifted *positive* values would have passed; `arith_r` covers negative
+  operands because the random/directed generators build from value classes
+  that include sign-bit-set patterns.
+
+---
+
+## BUG-005 — 5-stage core lost the WB forward when a data access stalled MEM
+
+- **Status:** fixed
+- **Label:** bug/rtl (real design defect; also a verification-environment
+  finding, because the simulation environment could not reach the state at
+  all — see "found-by")
+- **Symptom:** `reg_ch0` failed in the riscv-formal suite for `core_p5` at
+  CHECK_CYCLE 30 (42/44 green). The counterexample: instruction order `0xb`
+  writes **x15** = `0x40000490`; order `0xc` is `SH` (a store); order `0xd` is
+  `BGEU` reading **x15** and reporting `rvfi_rs1_rdata = 0x40000090` while the
+  check's shadow copy holds `0x40000490`. Every directed and random co-sim
+  test passed, before and after, with 40k+ instructions.
+- **Root cause (5 whys):** the EX forwarding network took its WB source from
+  `w_valid`, the single-cycle retire pulse. That is correct only if an
+  instruction spends exactly one cycle in EX. It does not:
+  1. A consumer C enters EX on the same cycle its producer P is in WB — C read
+     the register file in ID one cycle before P wrote it, so C *must* forward
+     from WB.
+  2. If the instruction between them is a load or store, MEM stalls for the
+     length of the bus transaction, and `ex_advance = mem_advance = 0`.
+  3. C is therefore pinned in EX for the whole transaction, but `w_valid` is
+     cleared on the very next cycle (`else w_valid <= 1'b0`).
+  4. C captures its operands into the EX/MEM register at the *end* of the
+     stall, by which time the forward is long gone, so it captures the stale
+     register-file read.
+  Why the register file's write-through did not save it: write-through covers
+  a producer three slots ahead (writing on the cycle C reads in ID), not one
+  that writes the cycle after.
+- **Fix (this commit) — `rtl/core/core_p5.v`:** split retire from
+  forwardability. `w_valid` stays a one-cycle pulse (it drives RVFI and the
+  register-file write enable); a new `w_fwd_live` is written only when MEM
+  advances, so it holds the last committed result for exactly as long as the
+  pipeline is stalled behind a data access. Because nothing can reach WB while
+  MEM is stalled, `w_fwd_live` always names the most recent architectural
+  register write, which is what makes forwarding from it correct at any point
+  during the hold.
+- **Regression test:** two parts, and the second is the important one.
+  1. `dv/core_iss` directed test `fwd_stall` (CPU-FWD-01): producer, then one
+     memory instruction, then a consumer of the producer — for every consumer
+     form that captures an operand (ALU rs1/rs2, load base, store data, branch
+     comparator, JALR target), with the middle instruction as both a load and
+     a store.
+  2. `+fastmem` in `tb_core.v`, plus a third leg in `run.ps1`. **The directed
+     test alone is not enough: it passes on the broken RTL.** Through the
+     timed memory model a fetch costs at least three cycles, so consecutive
+     instructions are never closer than three pipeline stages apart, and the
+     "producer in WB while consumer is pinned in EX" state is *structurally
+     unreachable* in simulation. `+fastmem` makes the instruction port
+     zero-wait-state while leaving the data port timed — fast fetch so
+     instructions pack back to back, slow data so MEM still stalls. Verified
+     both directions: on the pre-fix RTL `fwd_stall` passes with the timed
+     model and fails at retire 9 with `+fastmem`.
+- **Found-by:** riscv-formal `reg_ch0`, on the first full run of the 5-stage
+  core. This is the clearest argument for the formal leg in the whole project
+  so far: 40,000+ co-simulated instructions could not have found it, not
+  because the stimulus was unlucky but because the testbench's own timing made
+  the state unreachable. riscv-formal drives `ready` as a free variable and so
+  explores bus schedules the model never produces. The second lesson is about
+  coverage of the *environment*, not the design: a testbench whose timing is
+  always the same shape hides state space, and the fix was to make the
+  environment able to reach it — which is also exactly the timing an I$ will
+  produce at P3, so the bug would otherwise have surfaced there as a
+  regression in already-signed-off RTL.

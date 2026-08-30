@@ -16,6 +16,8 @@ import sys
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+CORE_DIR = {"mc": "tinytrust", "p5": "tinytrust_p5"}
+# set by main() from --core; run.ps1 has already generated the matching tree
 CHECKS = os.path.join(HERE, "riscv-formal", "cores", "tinytrust", "checks")
 
 # Checks that smtbmc/boolector (the genchecks default) cannot close in
@@ -56,17 +58,24 @@ def setup_path():
     suite = os.environ.get("OSS_CAD_SUITE", r"E:\tools\oss-cad-suite")
     os.environ["PATH"] = os.path.join(suite, "bin") + os.pathsep + \
         os.path.join(suite, "lib") + os.pathsep + os.environ["PATH"]
-    # oss-cad-suite ships yosys-smtbmc as a setuptools launcher pair
-    # (yosys-smtbmc.exe.exe + yosys-smtbmc.exe-script.py), which cmd cannot
-    # resolve as `yosys-smtbmc`. Shim it with a .bat, leaving the suite
-    # untouched. (python3 resolves via suite\lib, already on PATH.)
+    # oss-cad-suite ships some helpers as a setuptools launcher pair
+    # (<tool>.exe.exe + <tool>.exe-script.py), which cmd cannot resolve under
+    # the bare name. Shim them with .bat files, leaving the suite untouched.
+    # (python3 resolves via suite\lib, already on PATH.)
+    #   yosys-smtbmc — the default BMC engine
+    #   yosys-witness — converts abc's .aiw counterexample into a .yw trace.
+    #     Without it an abc-bmc3 check that finds a real counterexample dies
+    #     with "COMMAND NOT FOUND" and is reported ERROR instead of FAIL, so
+    #     the verdict is right but the trace needed to debug it is missing.
     import shutil
-    if shutil.which("yosys-smtbmc") is None:
-        launcher = os.path.join(suite, "bin", "yosys-smtbmc.exe.exe")
+    shim = os.path.join(HERE, "toolshim")
+    for tool in ("yosys-smtbmc", "yosys-witness"):
+        if shutil.which(tool) is not None:
+            continue
+        launcher = os.path.join(suite, "bin", f"{tool}.exe.exe")
         if os.path.exists(launcher):
-            shim = os.path.join(HERE, "toolshim")
             os.makedirs(shim, exist_ok=True)
-            with open(os.path.join(shim, "yosys-smtbmc.bat"), "w") as f:
+            with open(os.path.join(shim, f"{tool}.bat"), "w") as f:
                 f.write(f'@echo off\r\n"{launcher}" %*\r\n')
             os.environ["PATH"] = shim + os.pathsep + os.environ["PATH"]
 
@@ -95,7 +104,18 @@ def main():
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--filter", default="*")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--core", choices=("mc", "p5"), default="mc",
+                    help="mc = core.v (cores/tinytrust), "
+                         "p5 = core_p5.v (cores/tinytrust_p5)")
     args = ap.parse_args()
+
+    global CHECKS
+    CHECKS = os.path.join(HERE, "riscv-formal", "cores",
+                          CORE_DIR[args.core], "checks")
+    if not os.path.isdir(CHECKS):
+        print(f"no generated checks at {CHECKS} — run "
+              f"run.ps1 -Core {args.core} first")
+        sys.exit(2)
 
     setup_path()
     patch_heavy_engines()

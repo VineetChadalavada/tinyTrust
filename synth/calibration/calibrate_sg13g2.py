@@ -42,6 +42,9 @@ BLOCKS = {
     "core":    ("core", [ROOT / "rtl" / "core" / "core.v",
                          ROOT / "rtl" / "core" / "regfile.v",
                          ROOT / "rtl" / "core" / "pmp.v"]),
+    "core_p5": ("core_p5", [ROOT / "rtl" / "core" / "core_p5.v",
+                            ROOT / "rtl" / "core" / "regfile.v",
+                            ROOT / "rtl" / "core" / "pmp.v"]),
     "regfile": ("regfile", [ROOT / "rtl" / "core" / "regfile.v"]),
     "pmp":     ("pmp", [ROOT / "rtl" / "core" / "pmp.v"]),
     "ascon_p": ("ascon_p", [ROOT / "rtl" / "periph" / "ascon_p.v"]),
@@ -49,6 +52,12 @@ BLOCKS = {
 }
 
 SUBMODULE_OF_CORE = {"regfile", "pmp"}
+
+# core and core_p5 are alternatives, not siblings: a top-level total takes one
+# or the other. `core` is the v1 baseline the P1 numbers were taken against;
+# `core_p5` is what v2 carries forward from P2 on.
+CORE_VARIANTS = {"core", "core_p5"}
+PERIPHERALS = ("ascon_p", "bootrom")
 
 
 def setup_path() -> None:
@@ -144,13 +153,17 @@ def main() -> None:
         print(f"{name:<10} {r['area_um2']:>11.0f} {r['kGE']:>8.2f} "
               f"{r['flops']:>7} {seq_pct:>6.1f}%{tag}")
 
-    # Top-level total: core + the blocks that are not inside it.
-    total = sum(r["area_um2"] for n, r in results["blocks"].items()
-                if n not in SUBMODULE_OF_CORE)
-    results["total_top_level_um2"] = total
-    results["total_top_level_kGE"] = total / ge / 1000.0
-    print(f"{'TOTAL':<10} {total:>11.0f} {total/ge/1000.0:>8.2f}"
-          "        (core + ascon_p + bootrom; regfile/pmp are inside core)")
+    # Top-level total: one core variant + the blocks that are not inside it.
+    periph = sum(results["blocks"][n]["area_um2"] for n in PERIPHERALS)
+    results["totals"] = {}
+    for variant in sorted(CORE_VARIANTS):
+        total = results["blocks"][variant]["area_um2"] + periph
+        results["totals"][variant] = {"um2": total, "kGE": total / ge / 1000.0}
+        print(f"{'TOTAL':<10} {total:>11.0f} {total/ge/1000.0:>8.2f}"
+              f"        (with {variant} + ascon_p + bootrom)")
+    # keep the v1/P1 key so downstream readers of results_sg13g2.json still work
+    results["total_top_level_um2"] = results["totals"]["core"]["um2"]
+    results["total_top_level_kGE"] = results["totals"]["core"]["kGE"]
 
     (HERE / "results_sg13g2.json").write_text(
         json.dumps(results, indent=2), encoding="utf-8")

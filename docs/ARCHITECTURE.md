@@ -140,6 +140,15 @@ Multicycle FSM, one instruction fully retires before the next fetch:
 Estimated CPI ≈ 15–25 executing from flash — acceptable per D1; hot loops can
 be copied to PSRAM (still external) or kept tiny.
 
+> **v2 note (P2, 2026-08-30).** Everything in §5.1 and §5.2 describes
+> `rtl/core/core.v`, the multicycle core, which is still built and still
+> verified. It is no longer the core v2 carries forward. `rtl/core/core_p5.v`
+> implements the same architecture as a 5-stage pipeline with split
+> instruction/data ports and a single-cycle barrel shifter — see
+> [RETARGET.md](RETARGET.md) D13, the D1/D5/D10 reversals in §2, and the P2
+> results in §9. The two cores share `regfile.v` and `pmp.v` and are checked
+> against the same ISS and the same riscv-formal bar.
+
 ### 5.2 Datapath (shared-everything)
 
 - One 32-bit adder/subtractor: PC+4, branch/jump target, effective address,

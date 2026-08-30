@@ -277,8 +277,59 @@ def t_x0():
     return body + epilogue(), None
 
 
+def t_fwd_stall():
+    """CPU-FWD-01 (P2): EX forwarding must survive a data-bus stall.
+
+    Only meaningful for the 5-stage core. The pattern is a producer P, one
+    memory instruction X, then a consumer C of P:
+
+        P   addi x11, ...        writes x11
+        X   sw / lw              occupies MEM for several cycles
+        C   <uses x11>           sits in EX for the whole of X's stall
+
+    C read the register file in ID one cycle before P wrote it, so C can only
+    get the right operand by forwarding from the WB stage. C enters EX on the
+    cycle P is in WB, and then cannot leave EX until X's bus transaction
+    completes — so the WB forward has to stay live for the entire stall, not
+    just the single cycle after P leaves MEM. Distance 2 with a memory op in
+    between is the exact case; at distance 3 the register file read already
+    sees P's write (write-through) and no forwarding is needed.
+
+    Every consumer form that captures an operand is covered, because each one
+    latches rs1/rs2 at a different place in the datapath: ALU (rs1 and rs2),
+    load base address, store data and base, branch compare, JALR target.
+    """
+    body = LI32(10, SCRATCH)
+    val = 0x01234567
+    # (producer, consumer). x10 holds SCRATCH throughout, so the loads and
+    # stores stay in mapped, aligned memory. The JALR case needs a producer
+    # whose value is a real code address: AUIPC x11,0 puts this instruction's
+    # own PC in x11, and the three instructions P/X/C are contiguous, so
+    # JALR ...,x11,12 lands exactly on the instruction after C.
+    cases = [
+        ([ADDI(11, 10, 0)], [ADD(13, 11, 0)]),    # rs1 into the ALU
+        ([ADDI(11, 10, 0)], [ADD(13, 0, 11)]),    # rs2 into the ALU
+        ([ADDI(11, 10, 0)], [SUB(13, 11, 12)]),   # both operands live
+        ([ADDI(11, 10, 0)], [LW(13, 11, 0)]),     # rs1 as a load base
+        ([ADDI(11, 10, 0)], [SW(11, 8, 10)]),     # rs2 as store data
+        ([ADDI(11, 10, 0)], [BEQ(11, 12, 8)]),    # both into the comparator
+        ([AUIPC(11, 0)],    [JALR(13, 11, 12)]),  # rs1 as a jump target
+    ]
+    for producer, consumer in cases:
+        for x_is_store in (True, False):
+            val = (val * 5 + 1) & 0xFFFFFFFF
+            body += LI32(12, val)               # x12: known second operand
+            body += producer                    # P: writes x11
+            body += [SW(12, 0, 10)] if x_is_store \
+                else [LW(14, 0, 10)]            # X: occupies MEM, stalls
+            body += consumer                    # C: consumes x11 across it
+            body += [ADDI(13, 0, 0)]            # JALR/BEQ land here
+    return body + epilogue(), None
+
+
 TESTS = {
     "smoke": t_smoke,
+    "fwd_stall": t_fwd_stall,
     "arith_r": t_arith_r,
     "arith_i": t_arith_i,
     "shift_imm": t_shift_imm,
