@@ -186,6 +186,33 @@ overtake.
 | FLT-01 | Forced FSM-state corruption (sim force) → fault trap + sticky ALERT within N cycles | fault-injection sim |
 | GPIO-01 | OUT/IN paths, pin-map conformance to ARCHITECTURE §3 | cocotb |
 
+### 4.5 Caches (P3)
+
+| ID | Testpoint | Method |
+|---|---|---|
+| CACHE-HIT-01 | A hit is served without any memory-side transfer; a read hit returns the resident data | `dv/cache` directed + beat counting |
+| CACHE-MISS-01 | A cold miss refills exactly one 64 B line (16 beats) and the line is then resident | `dv/cache` directed |
+| CACHE-WB-01 | Evicting a dirty line writes it back before the refill (32 beats), and the data is recoverable afterwards | `dv/cache` directed + phase-3 read-back sweep |
+| CACHE-BM-01 | Partial writes (SB/SH) go through the macro's per-bit mask with no read-modify-write | `dv/cache` directed |
+| CACHE-UNC-01 | Addresses at or above CACHEABLE_LIMIT bypass the cache every time and are never cached | `dv/cache` directed + beat counting |
+| CACHE-FLT-01 | A bus fault during refill propagates to the core and leaves no valid line behind | `dv/cache` directed |
+| CACHE-FV-01 | **The cache is transparent: a read returns the last value written to that address** | F (`dv/formal/cache`, one-address abstraction) |
+| CACHE-SYS-01 | Core + I$ + D$ retire an identical instruction stream to the no-cache configuration | ISS lockstep, 4th regression leg |
+
+**Note on what the existing suites could not measure.** Every directed and
+random program in `dv/core_iss` is straight-line code executed once, which is
+the worst case for a cache: a 64 B line pulls in 16 instructions used exactly
+once, so an I$ can only match a plain fetch stream, never beat it. P3 therefore
+added `loop_bench`, a nested loop whose hot body is one cache line and whose
+working set fits the D$ — the only program in the suite with temporal locality,
+and the one the P3 CPI figure is quoted on. Correctness was never the gap here;
+the gap was that the workload could not exhibit the property being built.
+
+**Note on the formal boundary (D22).** The cache is *not* folded into the
+core's riscv-formal wrapper. The core keeps its own 44/44 at its own ports, and
+the cache is proven separately against CACHE-FV-01. Rationale and the measured
+proof-cost argument are in RETARGET.md D22 and §9.3.
+
 ## 5. Coverage model
 
 **Code coverage** (Verilator, CI): line ≥ 95 %, toggle ≥ 90 % on rtl/ —

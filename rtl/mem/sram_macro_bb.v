@@ -1,5 +1,10 @@
 // Blackbox declaration for the IHP SG13G2 single-port SRAM macro.
 //
+// Shared: pd/designs/sram_smoke/ and rtl/cache/cache.v both instantiate
+// the macro, and both need this to synthesise. Simulation binds
+// dv/models/sram_1p_bm.v instead; synthesis and P&R bind the LEF/Liberty
+// with this supplying only the module declaration.
+//
 // Synthesis needs the module to *exist* but must not descend into it: the
 // macro's physical view comes from the platform LEF and its timing from the
 // platform Liberty (both wired up in config.mk). Without this, yosys stops at

@@ -327,9 +327,43 @@ def t_fwd_stall():
     return body + epilogue(), None
 
 
+def t_loop_bench():
+    """CPI benchmark with temporal locality (P3).
+
+    Every other program in this suite is straight-line code executed once,
+    which is the worst possible case for a cache: a 64 B line pulls in 16
+    instructions that are each used exactly once, so an I$ can only ever match
+    a plain fetch stream, never beat it. Nothing in the directed suite or the
+    random generator contains a loop, so none of it can show what a cache is
+    for — measuring P3 on those programs measures refill bandwidth and nothing
+    else.
+
+    This is a nested loop summing a 512 B array, repeated. The inner body is 5
+    instructions, so the whole hot loop sits in a single 64 B cache line, and
+    the data fits several times over in a 4 KiB D$. After the first pass every
+    fetch and every load hits. That is the workload the P3 CPI comparison is
+    quoted on, and it is deliberately generous — it is an upper bound on what
+    these caches buy, not a typical program.
+    """
+    N_OUTER = 8
+    N_INNER = 128
+    pre = LI32(14, SCRATCH) + [ADDI(1, 0, 0)] + LI32(10, N_OUTER)
+    outer_head = [ADDI(11, 14, 0)] + LI32(12, N_INNER)
+    inner = [LW(3, 11, 0),          # load a word
+             ADD(1, 1, 3),          # accumulate
+             ADDI(11, 11, 4),       # bump the pointer
+             ADDI(12, 12, -1),      # inner counter
+             BNE(12, 0, -16)]       # back to the LW
+    outer_tail = [ADDI(10, 10, -1)]
+    back = -4 * (len(outer_head) + len(inner) + len(outer_tail))
+    body = pre + outer_head + inner + outer_tail + [BNE(10, 0, back)]
+    return body + epilogue(), None
+
+
 TESTS = {
     "smoke": t_smoke,
     "fwd_stall": t_fwd_stall,
+    "loop_bench": t_loop_bench,
     "arith_r": t_arith_r,
     "arith_i": t_arith_i,
     "shift_imm": t_shift_imm,

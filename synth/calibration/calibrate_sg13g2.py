@@ -47,6 +47,16 @@ BLOCKS = {
                             ROOT / "rtl" / "core" / "pmp.v"]),
     "regfile": ("regfile", [ROOT / "rtl" / "core" / "regfile.v"]),
     "pmp":     ("pmp", [ROOT / "rtl" / "core" / "pmp.v"]),
+    # The caches synthesise with the SRAM macro as a blackbox, so these
+    # numbers are the standard-cell half only: tag flops, comparators and the
+    # refill/writeback control. The data array is the macro measured in
+    # pd/results/sram_smoke/METRICS.md (150,102 um^2 = 20.68 kGE each).
+    "cache_i": ("cache", [ROOT / "rtl" / "cache" / "cache.v",
+                          ROOT / "rtl" / "mem" / "sram_macro_bb.v"],
+                {"WRITABLE": 0}),
+    "cache_d": ("cache", [ROOT / "rtl" / "cache" / "cache.v",
+                          ROOT / "rtl" / "mem" / "sram_macro_bb.v"],
+                {"WRITABLE": 1}),
     "ascon_p": ("ascon_p", [ROOT / "rtl" / "periph" / "ascon_p.v"]),
     "bootrom": ("bootrom", [ROOT / "rom" / "bootrom_stub.v"]),
 }
@@ -58,6 +68,8 @@ SUBMODULE_OF_CORE = {"regfile", "pmp"}
 # `core_p5` is what v2 carries forward from P2 on.
 CORE_VARIANTS = {"core", "core_p5"}
 PERIPHERALS = ("ascon_p", "bootrom")
+# caches are reported standalone; they are not part of the v1 top-level total
+STANDALONE = ("cache_i", "cache_d")
 
 
 def setup_path() -> None:
@@ -80,10 +92,16 @@ def nand2_area(text: str) -> float:
     return float(m.group(1))
 
 
-def synth_block(yosys: str, name: str, top: str, files: list) -> dict:
+def synth_block(yosys: str, name: str, top: str, files: list,
+                params: dict = None) -> dict:
     reads = "\n".join(f"read_verilog {f.as_posix()}" for f in files)
+    # chparam must run before hierarchy: the same module is measured at more
+    # than one parameter setting (cache_i and cache_d differ only in WRITABLE).
+    chp = "\n".join(f"chparam -set {k} {v} {top}"
+                    for k, v in (params or {}).items())
     script = f"""
 {reads}
+{chp}
 hierarchy -check -top {top}
 synth -top {top} -flatten
 dfflibmap -liberty {LIB.as_posix()}
@@ -142,14 +160,17 @@ def main() -> None:
     print(f"1 GE = sg13g2_nand2_1 = {ge} um^2\n")
     print(f"{'block':<10} {'area um^2':>11} {'kGE':>8} {'flops':>7} "
           f"{'seq %':>7}")
-    for name, (top, files) in BLOCKS.items():
-        r = synth_block(args.yosys, name, top, files)
+    for name, spec in BLOCKS.items():
+        top, files = spec[0], spec[1]
+        params = spec[2] if len(spec) > 2 else None
+        r = synth_block(args.yosys, name, top, files, params)
         r["kGE"] = r["area_um2"] / ge / 1000.0
         r["submodule_of_core"] = name in SUBMODULE_OF_CORE
         results["blocks"][name] = r
         seq_pct = (100.0 * r["seq_area_um2"] / r["area_um2"]
                    if r["area_um2"] else 0.0)
-        tag = "  (in core)" if name in SUBMODULE_OF_CORE else ""
+        tag = ("  (in core)" if name in SUBMODULE_OF_CORE
+               else "  (+ SRAM macro)" if name in STANDALONE else "")
         print(f"{name:<10} {r['area_um2']:>11.0f} {r['kGE']:>8.2f} "
               f"{r['flops']:>7} {seq_pct:>6.1f}%{tag}")
 

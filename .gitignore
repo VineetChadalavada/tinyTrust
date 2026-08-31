@@ -26,3 +26,8 @@ dv/formal/toolshim/
 
 # generated PDK liberty copies (see pd/designs/sram_smoke/patch_sram_lib.sh)
 pd/designs/sram_smoke/lib/
+
+# generated formal check trees and sim artifacts
+dv/formal/cache/icache/
+dv/formal/cache/dcache/
+dv/cache/out/

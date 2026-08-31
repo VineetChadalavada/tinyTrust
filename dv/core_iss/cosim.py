@@ -40,25 +40,32 @@ def setup_path():
         os.path.join(suite, "lib") + os.pathsep + os.environ["PATH"]
 
 
-def compile_rtl(core="mc"):
+def compile_rtl(core="mc", cache=False):
     os.makedirs(OUT, exist_ok=True)
-    vvp = os.path.join(OUT, f"sim_{core}.vvp")
+    tag = f"{core}{'_c' if cache else ''}"
+    vvp = os.path.join(OUT, f"sim_{tag}.vvp")
     src = [os.path.join(HERE, "tb_core.v")] + [
         os.path.join(RTLDIR, f)
         for f in (CORE_SRC[core], "regfile.v", "pmp.v")]
+    if cache:
+        # P3: the caches plus the behavioural SRAM model. The model exists
+        # because the ORFS platform references SRAM_1P_behavioral_bm_bist from
+        # every macro wrapper and never defines it (see dv/models/).
+        src += [os.path.join(HERE, "..", "..", "rtl", "cache", "cache.v"),
+                os.path.join(HERE, "..", "models", "sram_1p_bm.v")]
     # -DRISCV_FORMAL: the RVFI retire port is guarded so it stays out of
     # synthesis/P&R builds (it is 21% of core area). The lockstep check reads
     # that port, so the co-sim build must define it exactly as riscv-formal's
     # generated defines.sv does.
     # -DCORE_P5 selects the 5-stage DUT and its bus arbiter inside tb_core.v.
-    defines = ["-DRISCV_FORMAL"] + (["-DCORE_P5"] if core == "p5" else [])
+    defines = ["-DRISCV_FORMAL"] + (["-DCORE_P5"] if core == "p5" else [])         + (["-DWITH_CACHE"] if cache else [])
     subprocess.run(["iverilog", "-g2005"] + defines + ["-o", vvp] + src,
                    check=True)
     return vvp
 
 
 def run_one(name, words, vvp, seed=1, maxlat=3, max_steps=2_000_000,
-            max_cycles=20_000_000, core="mc", fastmem=0):
+            max_cycles=20_000_000, core="mc", fastmem=0, tag=None):
     hexf = os.path.join(OUT, f"{name}.hex")
     with open(hexf, "w") as f:
         f.write("".join(f"{w & 0xFFFFFFFF:08x}\n" for w in words))
@@ -70,7 +77,7 @@ def run_one(name, words, vvp, seed=1, maxlat=3, max_steps=2_000_000,
               f"({len(iss_lines)} retires)")
         return False, 0, 0
 
-    tracef = os.path.join(OUT, f"{name}.{core}.rtl.txt")
+    tracef = os.path.join(OUT, f"{name}.{tag or core}.rtl.txt")
     r = subprocess.run(
         ["vvp", vvp, f"+prog={hexf}", f"+trace={tracef}", f"+seed={seed}",
          f"+maxlat={maxlat}", f"+maxcycles={max_cycles}",
@@ -128,7 +135,17 @@ def main():
                          " BUG-005.")
     ap.add_argument("--core", choices=("mc", "p5", "both"), default="mc",
                     help="mc = multicycle core.v, p5 = 5-stage core_p5.v")
+    ap.add_argument("--cache", action="store_true",
+                    help="insert the P3 4 KiB I$/D$ between the 5-stage core"
+                         " and memory (rtl/cache/cache.v)")
     args = ap.parse_args()
+
+    if args.cache and args.core == "mc":
+        ap.error("--cache needs the 5-stage core (--core p5): the multicycle "
+                 "core has one unified port, not split I/D ports")
+    if args.cache and args.fastmem:
+        ap.error("--cache and --fastmem are alternatives: the I$ is the fast "
+                 "instruction path, and both would drive imem_ready")
 
     setup_path()
 
@@ -151,11 +168,13 @@ def main():
     for core in cores:
         if len(cores) > 1:
             print(f"--- core={core} ---")
-        vvp = compile_rtl(core)
+        use_cache = args.cache and core == "p5"
+        vvp = compile_rtl(core, use_cache)
+        tag = f"{core}{'_c' if use_cache else ''}"
         results = []
         for name, words, seed in programs:
             results.append(run_one(name, words, vvp, seed=seed,
-                                   maxlat=args.maxlat, core=core,
+                                   maxlat=args.maxlat, core=core, tag=tag,
                                    fastmem=1 if args.fastmem else 0))
         total = len(results)
         good = sum(ok for ok, _, _ in results)

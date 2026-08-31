@@ -74,6 +74,8 @@ directed + 12/12 random, 45,612 instructions, 0 mismatches.
 | D18 | **RV32I** — signed off and implemented 2026-08-16 | Stay RV32E | Reverses D2, whose rationale ("a 32×32 DFF file is larger than the rest of the core") was an artefact of the tile budget. RV32I **deletes the `rv32e_ok` fetch assumption from the formal wrapper** — the one environment restriction in the 44/44 suite that shrank the verified space — so the checks now run over the full register file with no ISA-shaping assumption. Also removes ilp32e toolchain friction. Cost: +512 flops/core ≈ +2.7 kGE. |
 | D19 | **Cache data arrays in SRAM macros; tag arrays in flops** | All-flop caches; all-SRAM | Data arrays are large and single-ported — a perfect macro fit. Tags need single-cycle compare *and* a snoop port; duplicating a small flop tag array per cache lets snoops proceed without stalling the core pipeline. |
 | D20 | **Keep the v1 security SoC** (ASCON, PMP, secure boot, SEC/ALERT) | Drop it to reduce scope | It is verified, it is ~15 kGE, and it fits trivially now. A coherent multicore *with* a hardware root of trust is a differentiated project; a coherent multicore alone is a textbook exercise. PMP becomes per-core. |
+| D21 | **4 KiB I$ and D$, 64 B line, direct-mapped** (signed off 2026-08-30) | 2 KiB; 32 B line; 2-way set associative | Capacity fixes the macro exactly: 4 KiB = one `RM_IHPSG13_1P_512x64` with zero waste (and there is no `1024x32` — see §4). Line size is the tag-flop lever: at 64 B a cache has 64 lines and ~1,344 tag flops (~9.1 kGE at the 6.75 GE/flop measured in P1); at 32 B it has 128 lines and ~18 kGE, roughly a whole multicycle core in flops *per cache*, before P4 duplicates the D$ tags for snooping. The cost is an 8-beat refill instead of 4. Direct-mapped because a replacement policy is state, and state is what P4/P5 have to prove things about — the protocol is the hard part and it should not arrive on top of LRU. Supersedes §4's "32 lines × 64 B" note, which described a 2 KiB cache while the same section budgeted 4 KiB macros. |
+| D22 | **Formal boundary stays at the core's ports; the cache is proven separately** (signed off 2026-08-30) | One wrapper over core + cache | Two reasons, one of them measured. The core's architecture does not change at P3, so its 44/44 is a standing property and should not be perturbed by cache proof cost — which keeps the milestone's "still 44/44 formal" true as written rather than as a redefinition. And the cost is real: `reg_ch0` on the bare pipeline needed a CHECK_CYCLE retune to close at all (§9.3), and folding in tag/data state and refill sequencing is the direction that made it intractable. The cache instead gets its own invariant — a read returns the last value written to that address, i.e. the cache is *transparent* — which is both easier to prove and the right foundation for P4, where coherence properties are stated over exactly that model. |
 
 ---
 
@@ -158,10 +160,20 @@ one or the other, which is why `calibrate_sg13g2.py` now prints two TOTAL rows.
 | block | area µm² | kGE | flops | vs. multicycle |
 |---|---|---|---|---|
 | **core** (multicycle, P1 baseline) | 137,363 | **18.93** | 1,419 | — |
-| **core_p5** (5-stage) | 179,684 | **24.76** | 1,786 | **+5.83 kGE (+31%), +367 flops** |
+| **core_p5** (5-stage) | 180,652 | **24.89** | 1,787 | **+5.96 kGE (+31.5%), +368 flops** |
 | pmp, standalone | 13,337 | 1.84 | 112 | +0.34 kGE vs. P1's 1.50 |
 | top-level total, with `core` | 194,314 | 26.77 | | |
-| top-level total, with `core_p5` | 236,635 | **32.61** | | |
+| top-level total, with `core_p5` | 237,603 | **32.74** | | |
+
+*Corrected 2026-08-30 (P3).* The `core_p5` row first published for P2 read
+179,684 µm² / 24.76 kGE / 1,786 flops. Those numbers were measured **before**
+the BUG-005 fix landed and were stale by one flop: `w_fwd_live`, the register
+that keeps the WB forward alive across a data stall, is exactly one bit, and
+it plus the forwarding mux it feeds accounts for the +968 µm². Re-measured
+against the committed RTL and confirmed reproducible (yosys + ABC give
+180652.1346 µm² on three consecutive runs, so this is a real difference, not
+tool variance). The P2 commit message carries the stale figure; this table is
+the correct one.
 
 Three notes on the deltas:
 
@@ -287,7 +299,7 @@ macro-only smoke test before committing the cache architecture.
 | **P0** | Backend bring-up | ORFS + sg13g2 running; **existing single core hardened to GDS**; first die render produced. Proves the flow before the RTL grows. | **done** 2026-08-28 |
 | **P1** | Recalibrate | `run_calibration.py` re-run against sg13g2; area budget §4 replaced with measured numbers; D18 (RV32I) signed off | **done** 2026-08-28 |
 | **P2** | 5-stage pipeline | Pipelined core passes ISS lockstep + riscv-formal at the v1 bar; CPI measured vs. multicycle | **done** 2026-08-30 — §9. Lockstep 0 mismatches over 19,326 instructions × 3 memory configs; riscv-formal 44/44 (both cores); CPI 7.784 → 6.208, and 2.237 with fetch free |
-| **P3** | Caches, single core | I$/D$ with SRAM macros; hit/miss verified; still 44/44 formal | next |
+| **P3** | Caches, single core | I$/D$ with SRAM macros; hit/miss verified; still 44/44 formal | **substantially complete** 2026-08-31 — §10. RTL, block-level and system verification green (4 legs, 0 mismatches); core_p5 riscv-formal 44/44 re-observed; CPI 7.62 → 2.55. Open: CACHE-FV-01 has not returned a verdict (§10.6) |
 | **P4** | Coherence | 2 cores, shared bus, MESI; protocol invariants formally proven; UVM coherence env; litmus tests |
 | **P5** | MOESI + measurement | `COHERENCE=MOESI` closes the same suite; writeback-traffic and latency comparison written up |
 | **P6** | Physical signoff | Pad ring, full-chip P&R, timing closure, DRC + LVS clean, GL sim |
@@ -479,3 +491,188 @@ evidence that the refactor is behaviour-preserving.
   traffic common, the serialization becomes the thing to attack — and the
   bypass network it was traded against is written up here so the trade is
   legible rather than rediscovered.
+
+---
+
+## 10. Milestone results: P3 — caches
+
+*Completed 2026-08-31. Exit criteria from §7: "I$/D$ with SRAM macros;
+hit/miss verified; still 44/44 formal."*
+
+### 10.1 What was built
+
+`rtl/cache/cache.v` — one parameterised module serving both caches. 4 KiB,
+64 B line, direct-mapped (D21); write-back, write-allocate for the D$ (D17);
+data array in one `RM_IHPSG13_1P_512x64` with tags in flops (D19). The core
+side is exactly the port shape `core_p5` already drove on imem/dmem and the
+memory side is exactly the bus the SoC already spoke, so the caches dropped in
+without either end changing.
+
+Three things are worth pulling out of the RTL:
+
+- **Write hits cost zero wait states.** The macro's per-bit write mask means a
+  partial (SB/SH) write needs no read-modify-write: the byte enables expand
+  onto `A_BM` and the write retires in the cycle it arrives. This is the
+  concrete reason a bit-masked macro was worth having.
+- **A miss re-runs rather than being served from the fill path.** After the
+  refill the request simply tries again and hits, which costs one lookup cycle
+  per miss and removes an entire class of bypass logic. The core holds address
+  and valid stable until ready, so it is free to retry — verifiability first.
+- **Uncacheable region, and it is a correctness requirement rather than an
+  optimisation.** TOHOST is a device register at 0x0001_0000; a write-back
+  cache would swallow the store that ends every test. Addresses at or above
+  `CACHEABLE_LIMIT` bypass entirely, which is also what keeps the core's
+  precise access-fault behaviour intact.
+
+**Not handled, deliberately:** there is no I$/D$ coherence and the core traps
+FENCE.I, so self-modifying code is unsupported. Every test keeps code below
+0x7000 and data at 0x8000 and up, so no store can alias a cached instruction
+line. Coherence arrives with the snoop channel at P4.
+
+### 10.2 The first version made the machine slower
+
+Worth recording because the fix is the whole argument for the geometry choice.
+The cache as first built gave **CPI 6.91 against 4.51 with no cache at all**.
+A read hit costs one wait state — the tag compare is combinational but the
+SRAM read is not — so every fetch took two cycles where the uncached path took
+roughly the same, and the misses were pure loss.
+
+The fix is what D21 chose a 64-bit-wide macro for: **one SRAM read returns two
+instructions.** Keeping the sibling word in a one-entry fetch buffer makes a
+sequential fetch stream alternate SRAM-read / buffer-hit, so the fetch path
+averages one cycle per instruction instead of two. Invalidation is a single
+conservative clear when a line lands, because a read-only cache has nothing
+else that can make a buffered word stale.
+
+### 10.3 CPI — and a benchmark that had to be written first
+
+**The existing test suite structurally could not measure this milestone.**
+Every directed and random program in `dv/core_iss` is straight-line code
+executed once. That is the worst case for a cache: a 64 B line pulls in 16
+instructions that are each used exactly once, so an I$ can only ever match a
+plain fetch stream, never beat it. Measuring P3 on those programs measures
+refill bandwidth and nothing else. Nothing in the suite had a loop.
+
+So `loop_bench` was added: a nested loop whose 5-instruction hot body sits in a
+single cache line and whose 512 B working set fits the D$ several times over.
+It is deliberately generous — an upper bound on what these caches buy, not a
+typical program — and it is the only workload in the suite with temporal
+locality.
+
+| configuration (`loop_bench`, 5,164 instructions) | CPI | vs. multicycle |
+|---|---|---|
+| multicycle core, no cache | 7.62 | — |
+| 5-stage core, no cache | 6.29 | 1.21× |
+| **5-stage core + I$ and D$** | **2.55** | **2.99×** |
+
+That completes the argument D1 was reversed on. The pipeline alone buys 1.21×;
+the pipeline with caches buys 2.99×. "The cache is what justifies the pipeline"
+is now a measured claim over three configurations rather than a rationale.
+
+### 10.4 Area
+
+Standard-cell area only — the data array is the macro measured at
+`pd/results/sram_smoke/METRICS.md`, 150,102 µm² = 20.68 kGE each.
+
+| block | area µm² | kGE | flops | + macro | total |
+|---|---|---|---|---|---|
+| `cache` (I$, WRITABLE=0) | 120,619 | 16.62 | 1,529 | 20.68 | **37.30 kGE** |
+| `cache` (D$, WRITABLE=1) | 124,168 | 17.11 | 1,530 | 20.68 | **37.79 kGE** |
+
+D21 estimated ~9.1 kGE for the I$ tag flops and that part holds — 1,529 flops
+against the ~1,344 predicted for tags, with the rest being the fetch buffer and
+the refill/writeback datapath (`wb_data`, `line_base`, `fill_lo`). What D21 did
+*not* estimate is that the control and datapath around the tags roughly doubles
+the standard-cell area: the realised cache logic is 16.6 kGE, not 9.1. The
+prediction was for the part it named, and the part it did not name was the
+larger half.
+
+One core with both caches is now 24.89 + 37.30 + 37.79 = **99.98 kGE**, of
+which 41% is SRAM macro. Two of those is ~200 kGE ≈ 1.45 mm² — still
+comfortable on a 2×2 mm die, but P4 should size the coherence work knowing
+that caches, not cores, dominate.
+
+### 10.5 Verification
+
+**Block level — `dv/cache`, 6/6 across three seeds.** The testbench checks two
+separate claims, because a data-only check proves only the first: a cache that
+missed on every access would pass it. So memory-side beats are counted and
+hits are asserted to generate *none*, a cold miss exactly 16, and a dirty
+eviction exactly 32. Directed phase covers cold miss, read and write hits,
+partial writes through the macro's bit mask, dirty eviction, uncacheable
+pass-through and a bus fault during refill. Then random traffic over a range
+that forces constant index conflicts, then a read-back sweep of every address
+ever written — the sweep is what actually proves the writeback path, since an
+evicted dirty line is only re-readable if its data really reached memory.
+
+**System level — all four regression legs, 22 programs, 18,973 instructions
+each, 0 mismatches.** The cached configuration retires an identical
+instruction stream to the uncached one, which is the property that matters:
+the caches are invisible to the architecture.
+
+**Core riscv-formal — the 5-stage core re-observed at 44/44.** Re-run against
+the committed RTL after all P3 work: `dv/formal/riscv-formal/cores/tinytrust_p5`
+reports 44/44, with 44 on-disk PASS status files. That is the core P3 actually
+integrates with, and it is a fresh observation rather than an argument.
+
+The multicycle suite was **not** re-observed — its run was cut short. It stood
+at 44/44 at commit `a2b2653` and `rtl/core/core.v` has not been touched since,
+so it holds by the same reasoning D22 rests on (the cache is outside the proof
+boundary and cannot perturb either core). Sound, but an argument rather than a
+measurement, and recorded as such.
+
+**CACHE-FV-01 — attempted, open.** The transparency property (a read returns
+the last value written to that address) is written and the harness works:
+`dv/formal/cache/cache_fv.sv`, using a one-address abstraction with an
+`anyconst` address so a proof would cover every address rather than a chosen
+one. It has not returned a verdict. Three configurations were run:
+
+| geometry | depth | reset cycles | reached | outcome |
+|---|---|---|---|---|
+| shipped (64 B line, 64 lines) | 55 | 15 | step 40 | no verdict after **6h21m**; >1h on a single solver query |
+| reduced (16 B line, 4 lines) | 40 | 15 | step 38 | clean, stopped at 39 min |
+| reduced (16 B line, 4 lines) | 32 | 3 | step 26 | clean, stopped at 28 min |
+| reduced, `abc bmc3` + `memory_map` | 40 | 3 | step 33 | clean, stopped at 97 min |
+
+The last row is the useful one for whoever picks this up. Switching from
+smtbmc/boolector to `abc bmc3` on a `memory_map`'d netlist — the same trick
+`runchecks.py` already applies to the core's `reg` check — is dramatically
+faster at low depth (step 11 in 0.4 s against minutes per step), because the
+SRAM array stops being an SMT array and becomes plain flops. It still grows
+steeply: by step 33 each additional step costs 10-18 minutes. A bound around
+26 looks like the largest that closes in reasonable time, which covers a cold
+miss, the refill, a read, and a write hit, but not the full evict-writeback-
+refill-reread sequence. Closing that properly is the open item.
+
+**No counterexample was produced at any depth, and no assertion failed at any
+step reached** — but "did not terminate" is not "passed", and it is not being
+recorded as one. The shipped-geometry result is the informative one: a single
+refill is 16 beats, so a bounded proof spends its entire depth inside one line
+transfer and never reaches the sequence that matters (write, evict, writeback,
+refill the replacing line, re-read). That is why `cache.v` grew real geometry
+parameters, and the reduced configuration is a legitimate way to prove the
+protocol — tag compare, dirty tracking, refill assembly order, writeback
+ordering and the fetch buffer are all geometry-independent, and the widths are
+`clog2`-derived so there is no separate code path. What it would *not* cover
+is a defect that only appears at a specific width; the block testbench runs the
+shipped geometry and covers that.
+
+Two lessons worth keeping. The proof cost is dominated by the SRAM array being
+part of the model, which is the thing the P2 `reg_ch0` retune already hinted
+at: bounded proofs over designs with large arrays scale badly, and the fix is
+always to shrink what is being unrolled rather than to wait longer. And a
+third of the first reduced-geometry run's depth was spent sitting in reset —
+15 cycles of a 40-cycle bound — which is pure waste in a bounded proof and was
+cut to 3.
+
+### 10.6 P3 status against its exit criteria
+
+| criterion | status |
+|---|---|
+| I$/D$ with SRAM macros | **met** — 4 KiB each, `RM_IHPSG13_1P_512x64` data arrays |
+| hit/miss verified | **met** — block-level beat counting plus the system legs |
+| still 44/44 formal | **met for the 5-stage core** — 44/44 re-observed after all P3 work. The multicycle suite was not re-run; unchanged since `a2b2653` where it was 44/44 |
+| *(added by D22)* cache proven separately | **open** — CACHE-FV-01 has not returned a verdict |
+
+P3 is therefore substantially complete but not closed. The remaining work is
+one uninterrupted proof run plus a confirming core suite, not new design.

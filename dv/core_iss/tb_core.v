@@ -73,16 +73,67 @@ module tb_core;
     wire [31:0] rvfi_mem_rdata, rvfi_mem_wdata;
 
 `ifdef CORE_P5
-    // ---------------- 5-stage core: split I/D ports + arbiter -------------
+    // ---------------- 5-stage core: split I/D ports -----------------------
     wire        imem_valid, dmem_valid;
     wire [31:0] imem_addr, dmem_addr, dmem_wdata;
     wire [3:0]  dmem_wstrb;
+    wire        imem_ready, imem_fault, dmem_ready, dmem_fault;
+    wire [31:0] imem_rdata, dmem_rdata;
+
+    // What the bus arbiter sees. Without caches these are the core's own
+    // ports; with -DWITH_CACHE a cache sits in between and these carry the
+    // caches' refill and writeback traffic instead.
+    wire        bi_valid, bd_valid;
+    wire [31:0] bi_addr, bd_addr, bd_wdata;
+    wire [3:0]  bd_wstrb;
+    wire        bi_ready, bi_fault, bd_ready, bd_fault;
+    wire [31:0] bi_rdata, bd_rdata;
+
+`ifdef WITH_CACHE
+    // P3: 4 KiB direct-mapped I$ and D$ (D21) with SRAM data arrays (D19).
+    // +fastmem is not available in this configuration and cosim.py rejects
+    // the combination: the I$ *is* the fast instruction path now, and letting
+    // both drive imem_ready would put two drivers on one wire.
+    cache #(.WRITABLE(0)) u_icache (
+        .clk     (clk),        .rst_n   (rst_n),
+        .c_valid (imem_valid), .c_addr  (imem_addr),
+        .c_wdata (32'd0),      .c_wstrb (4'd0),
+        .c_ready (imem_ready), .c_rdata (imem_rdata), .c_fault (imem_fault),
+        .m_valid (bi_valid),   .m_addr  (bi_addr),
+        .m_wdata (),           .m_wstrb (),
+        .m_ready (bi_ready),   .m_rdata (bi_rdata),   .m_fault (bi_fault)
+    );
+
+    cache #(.WRITABLE(1)) u_dcache (
+        .clk     (clk),        .rst_n   (rst_n),
+        .c_valid (dmem_valid), .c_addr  (dmem_addr),
+        .c_wdata (dmem_wdata), .c_wstrb (dmem_wstrb),
+        .c_ready (dmem_ready), .c_rdata (dmem_rdata), .c_fault (dmem_fault),
+        .m_valid (bd_valid),   .m_addr  (bd_addr),
+        .m_wdata (bd_wdata),   .m_wstrb (bd_wstrb),
+        .m_ready (bd_ready),   .m_rdata (bd_rdata),   .m_fault (bd_fault)
+    );
+`else
+    assign bi_valid   = imem_valid;
+    assign bi_addr    = imem_addr;
+    assign imem_ready = bi_ready;
+    assign imem_rdata = bi_rdata;
+    assign imem_fault = bi_fault;
+
+    assign bd_valid   = dmem_valid;
+    assign bd_addr    = dmem_addr;
+    assign bd_wdata   = dmem_wdata;
+    assign bd_wstrb   = dmem_wstrb;
+    assign dmem_ready = bd_ready;
+    assign dmem_rdata = bd_rdata;
+    assign dmem_fault = bd_fault;
+`endif
 
     reg  arb_busy, arb_grant_d;   // grant is locked for the whole transaction
-    // With +fastmem the instruction port is served combinationally below and
-    // never touches the shared model, so the data port simply owns it.
+    // With +fastmem the instruction side is served combinationally below and
+    // never touches the shared model, so the data side simply owns it.
     wire sel_d = (fast_mem != 0) ? 1'b1
-                                 : (arb_busy ? arb_grant_d : dmem_valid);
+                                 : (arb_busy ? arb_grant_d : bd_valid);
 
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
@@ -90,32 +141,37 @@ module tb_core;
             arb_grant_d <= 1'b0;
         end else if (arb_busy) begin
             if (bus_ready) arb_busy <= 1'b0;
-        end else if (imem_valid || dmem_valid) begin
+        end else if (bi_valid || bd_valid) begin
             arb_busy    <= 1'b1;
-            arb_grant_d <= dmem_valid;
+            arb_grant_d <= bd_valid;
         end
     end
 
-    assign bus_valid    = (fast_mem != 0) ? dmem_valid
-                                          : (imem_valid | dmem_valid);
-    assign bus_addr     = sel_d ? dmem_addr  : imem_addr;
-    assign bus_wdata    = dmem_wdata;
-    assign bus_wstrb    = sel_d ? dmem_wstrb : 4'd0;
+    assign bus_valid    = (fast_mem != 0) ? bd_valid : (bi_valid | bd_valid);
+    assign bus_addr     = sel_d ? bd_addr  : bi_addr;
+    assign bus_wdata    = bd_wdata;
+    assign bus_wstrb    = sel_d ? bd_wstrb : 4'd0;
     assign bus_is_fetch = ~sel_d;
 
+    assign bd_ready = (fast_mem != 0) ? bus_ready : (bus_ready & sel_d);
+    assign bd_rdata = bus_rdata;
+    assign bd_fault = bus_fault;
+
+`ifdef WITH_CACHE
+    assign bi_ready = bus_ready & ~sel_d;
+    assign bi_rdata = bus_rdata;
+    assign bi_fault = bus_fault;
+`else
     // zero-wait-state instruction path (+fastmem). Fetches never write, so
     // the shared model's write and TOHOST side effects are untouched by this.
-    wire i_in_ram = (imem_addr <  32'h0001_0000);
-    wire i_in_th  = (imem_addr == 32'h0001_0000);
-
-    wire        imem_ready = (fast_mem != 0) ? 1'b1 : (bus_ready & ~sel_d);
-    wire [31:0] imem_rdata = (fast_mem != 0)
-                             ? (i_in_ram ? ram[imem_addr[15:2]] : 32'd0)
-                             : bus_rdata;
-    wire        imem_fault = (fast_mem != 0) ? (!i_in_ram && !i_in_th)
-                                             : bus_fault;
-    wire        dmem_ready = (fast_mem != 0) ? bus_ready
-                                             : (bus_ready & sel_d);
+    wire i_in_ram = (bi_addr <  32'h0001_0000);
+    wire i_in_th  = (bi_addr == 32'h0001_0000);
+    assign bi_ready = (fast_mem != 0) ? 1'b1 : (bus_ready & ~sel_d);
+    assign bi_rdata = (fast_mem != 0)
+                      ? (i_in_ram ? ram[bi_addr[15:2]] : 32'd0)
+                      : bus_rdata;
+    assign bi_fault = (fast_mem != 0) ? (!i_in_ram && !i_in_th) : bus_fault;
+`endif
 
     core_p5 dut (
         .clk            (clk),
@@ -130,8 +186,8 @@ module tb_core;
         .dmem_wdata     (dmem_wdata),
         .dmem_wstrb     (dmem_wstrb),
         .dmem_ready     (dmem_ready),
-        .dmem_rdata     (bus_rdata),
-        .dmem_fault     (bus_fault),
+        .dmem_rdata     (dmem_rdata),
+        .dmem_fault     (dmem_fault),
         .irq_timer      (1'b0),
         .irq_external   (1'b0),
         .fsm_fault      (fsm_fault),

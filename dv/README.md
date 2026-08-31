@@ -19,7 +19,24 @@ Verification strategy per REQUIREMENTS.md §6. Planned structure:
   while leaving the data port timed; that combination is what reaches the
   pipeline states the timed model structurally cannot (BUG-005), and it is
   a preview of I$ timing at P3. `run.ps1` runs all three legs.
-  Run: `python cosim.py --core both --directed --random 4` (or `run.ps1`).
+  `--cache` inserts the P3 I$/D$ between the core and memory.
+  Run: `python cosim.py --core both --directed --random 4` (or `run.ps1`,
+  which runs all four legs).
+- `cache/` — **block-level cache testbench (P3)**: drives `rtl/cache/cache.v`
+  against a golden model of a coherent memory, and separately counts the
+  memory-side beats. Both claims are needed — a cache that missed on every
+  access would pass a data-only check — so hits are asserted to generate zero
+  beats and a dirty eviction exactly 32 (16 writeback + 16 refill). Directed
+  phase covers cold miss, read/write hit, partial writes through the macro's
+  bit mask, dirty eviction, uncacheable pass-through and refill faults; then
+  random traffic over a range that forces constant index conflicts; then a
+  read-back sweep of every address ever written, which is what actually proves
+  the writeback path. `-DDCACHE` selects the write-back data cache.
+- `models/` — simulation model of the IHP SG13G2 SRAM macro. It exists
+  because the ORFS platform references `SRAM_1P_behavioral_bm_bist` from all
+  ten macro wrappers and never defines it, so the vendor `FUNCTIONAL` path is
+  unusable as shipped. Simulation binds this; synthesis and P&R bind the LEF
+  and Liberty with `rtl/mem/sram_macro_bb.v` supplying the declaration.
 - `cocotb/` — Python testbenches + regressions (Icarus/Verilator), for the
   core and SoC level.
 - `formal/` — **riscv-formal harness (live since 2026-07-19)**: SBY bounded
@@ -30,6 +47,10 @@ Verification strategy per REQUIREMENTS.md §6. Planned structure:
   The RV32E wrapper assumption is gone (D18); see `formal/README.md`.
   `reg_ch0` on the pipelined core is what found BUG-005, a forwarding defect
   no amount of co-simulation could have reached.
+  `cache/` holds the P3 cache proof (D22): rather than fold cache state into
+  the core's wrapper, the cache is proven separately against the property that
+  it is *transparent* — a read returns the last value written to that address
+  — using a one-address abstraction so the state space stays closable.
   SVA property files for bus/PMP invariants come with M2.
 - `uvm/` — **empty; nothing here has been built.** The v1 plan was a UVM
   environment for `ascon_p`, which docs/RETARGET.md §5 retired as honestly

@@ -1,0 +1,20 @@
+[options]
+mode bmc
+depth 26
+expect pass,fail
+
+[engines]
+abc bmc3
+
+[script]
+read -sv -DDCACHE cache_fv.sv
+read -sv cache.v
+read -sv sram_1p_bm.v
+prep -top cache_fv -flatten
+memory_map
+opt -fast
+
+[files]
+cache_fv.sv
+../../../rtl/cache/cache.v
+../../models/sram_1p_bm.v
