@@ -1,7 +1,10 @@
 [options]
 mode bmc
 depth 26
-expect pass,fail
+# expect pass, not pass,fail. run.ps1 keys off the exit code, and sby treats
+# an "expected" FAIL as a clean exit (see the note in dv/formal/runchecks.py)
+# -- so pass,fail would report a real counterexample as success.
+expect pass
 
 [engines]
 abc bmc3

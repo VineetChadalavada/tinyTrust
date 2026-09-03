@@ -1,0 +1,36 @@
+# Non-vacuity witness for CACHE-FV-01.
+#
+# The bmc run (icache.sby) proves the transparency assertion cannot be
+# violated within the bound. That is only meaningful if the environment can
+# actually reach the behaviour being asserted over: a read of the tracked
+# word. The assumptions here are not weak (request stability, two-cycle bus
+# fairness, chk_word cacheable), and an over-constrained environment makes
+# BMC pass vacuously.
+#
+# cache_fv.sv states `cover (core_read)` for exactly this reason, but sby
+# only evaluates cover statements in `mode cover` — under `mode bmc` that
+# cover is dead code. This file is what makes it run.
+[options]
+mode cover
+depth 26
+expect pass
+
+# abc has no cover mode ("Invalid engine 'abc' for cover mode"), so the
+# non-vacuity witness uses smtbmc. That is affordable here in a way the bmc
+# proof is not: cover mode stops at the first trace reaching the cover, which
+# is ~10 cycles (3 reset + a 4-beat refill + the read), not 26.
+[engines]
+smtbmc boolector
+
+[script]
+read -sv cache_fv.sv
+read -sv cache.v
+read -sv sram_1p_bm.v
+prep -top cache_fv -flatten
+memory_map
+opt -fast
+
+[files]
+cache_fv.sv
+../../../rtl/cache/cache.v
+../../models/sram_1p_bm.v

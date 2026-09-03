@@ -1,7 +1,53 @@
+# CACHE-FV-01, D$ -- KNOWN NOT TO CLOSE. Not part of the default suite.
+#
+# Kept because the measurements below are the useful result, and because the
+# next person to attempt this should not have to rediscover them.
+#
+# TWO INDEPENDENT REASONS THIS DOES NOT WORK, both measured 2026-09-03.
+#
+# 1. The bound cannot be reached. Cumulative abc-bmc3 solve time by step, at
+#    the 16 B / 4-line geometry:
+#
+#        step 15     60 s
+#        step 16    235 s
+#        step 17    949 s        -> ~4x per step
+#
+#    The I$ (icache.sby) grew ~1.4x per step over the same range and closed at
+#    26 in 14m36s. The difference is the write path: a free 4-bit c_wstrb
+#    every cycle, dirty tracking, and the writeback state machine.
+#
+# 2. The bound was too small to be meaningful anyway. cache_fv.sv covers the
+#    sequence the D$ property actually turns on -- a writeback of the tracked
+#    word followed by a core read of it. Measured with dcache_cover.sby, that
+#    sequence is first reachable at step 28. The previous bound here was 26,
+#    i.e. below the depth at which the behaviour being proven can occur at
+#    all. A PASS at 26 would have been sound and nearly worthless: it would
+#    have proven the property over refills and write hits only, never over an
+#    eviction.
+#
+#    That is the more important of the two findings. Reason 1 is a cost
+#    problem; reason 2 means the run was not asking the intended question.
+#
+# Depth is therefore set to 28 -- the measured minimum that reaches the
+# sequence -- rather than to a number that finishes. At ~4x per step from 949 s
+# at step 17, step 28 is roughly 4^11 times that. It will not terminate.
+#
+# WHAT WOULD ACTUALLY CLOSE IT
+# Not a longer run. BMC has to replay the whole write-evict-writeback-refill
+# sequence from reset every time, and that is what costs 4x a step. The two
+# routes that avoid it:
+#   - k-induction (sby `mode prove`) with invariants over the tag/dirty state,
+#     so the eviction does not have to be reached from reset; or
+#   - decomposing the property, e.g. proving writeback correctness from an
+#     unconstrained starting state with an invariant that the dirty bit implies
+#     the SRAM line matches what the core wrote.
+# Both are real work and belong with the P4 coherence proofs, which need the
+# same machinery over the same state.
 [options]
 mode bmc
-depth 26
-expect pass,fail
+depth 28
+# see icache.sby -- pass,fail would report a counterexample as success
+expect pass
 
 [engines]
 abc bmc3

@@ -299,7 +299,7 @@ macro-only smoke test before committing the cache architecture.
 | **P0** | Backend bring-up | ORFS + sg13g2 running; **existing single core hardened to GDS**; first die render produced. Proves the flow before the RTL grows. | **done** 2026-08-28 |
 | **P1** | Recalibrate | `run_calibration.py` re-run against sg13g2; area budget §4 replaced with measured numbers; D18 (RV32I) signed off | **done** 2026-08-28 |
 | **P2** | 5-stage pipeline | Pipelined core passes ISS lockstep + riscv-formal at the v1 bar; CPI measured vs. multicycle | **done** 2026-08-30 — §9. Lockstep 0 mismatches over 19,326 instructions × 3 memory configs; riscv-formal 44/44 (both cores); CPI 7.784 → 6.208, and 2.237 with fetch free |
-| **P3** | Caches, single core | I$/D$ with SRAM macros; hit/miss verified; still 44/44 formal | **substantially complete** 2026-08-31 — §10. RTL, block-level and system verification green (4 legs, 0 mismatches); core_p5 riscv-formal 44/44 re-observed; CPI 7.62 → 2.55. Open: CACHE-FV-01 has not returned a verdict (§10.6) |
+| **P3** | Caches, single core | I$/D$ with SRAM macros; hit/miss verified; still 44/44 formal | **closed 2026-09-03, one criterion knowingly open** — §10. RTL, block-level and system verification green (4 legs, 0 mismatches); riscv-formal 44/44 measured on **both** cores; CPI 7.62 → 2.55; CACHE-FV-01 PASS for the I$ at depth 26 with a non-vacuity witness. Open: the D$ leg, which BMC cannot reach — ~4x per step and a bound of 28 needed for an eviction. Carried to P4 (§10.6) |
 | **P4** | Coherence | 2 cores, shared bus, MESI; protocol invariants formally proven; UVM coherence env; litmus tests |
 | **P5** | MOESI + measurement | `COHERENCE=MOESI` closes the same suite; writeback-traffic and latency comparison written up |
 | **P6** | Physical signoff | Pad ring, full-chip P&R, timing closure, DRC + LVS clean, GL sim |
@@ -615,17 +615,67 @@ the committed RTL after all P3 work: `dv/formal/riscv-formal/cores/tinytrust_p5`
 reports 44/44, with 44 on-disk PASS status files. That is the core P3 actually
 integrates with, and it is a fresh observation rather than an argument.
 
-The multicycle suite was **not** re-observed — its run was cut short. It stood
-at 44/44 at commit `a2b2653` and `rtl/core/core.v` has not been touched since,
-so it holds by the same reasoning D22 rests on (the cache is outside the proof
-boundary and cannot perturb either core). Sound, but an argument rather than a
-measurement, and recorded as such.
+The multicycle suite was re-observed too, and is now a measurement rather than
+an argument: **44/44 on 2026-09-03**, a full regenerate-and-run of
+`cores/tinytrust` (`reg_ch0` slowest at 410 s, consistent with the profile that
+made it the one check needing the `abc bmc3` retune). It had previously stood
+at 44/44 at commit `a2b2653` and been carried forward by reasoning — `core.v`
+untouched, the cache outside the proof boundary. The reasoning was sound; it is
+simply no longer what the claim rests on.
 
-**CACHE-FV-01 — attempted, open.** The transparency property (a read returns
-the last value written to that address) is written and the harness works:
-`dv/formal/cache/cache_fv.sv`, using a one-address abstraction with an
-`anyconst` address so a proof would cover every address rather than a chosen
-one. It has not returned a verdict. Three configurations were run:
+**CACHE-FV-01 — the I$ is closed; the D$ is open for a stated reason.** The
+transparency property (a read returns the last value written to that address)
+is `dv/formal/cache/cache_fv.sv`, using a one-address abstraction with an
+`anyconst` address so a proof covers every address rather than a chosen one.
+
+**I$ — PASS at depth 26** (2026-09-03, `abc bmc3` on a `memory_map`'d netlist,
+14m36s, frames 0-25 all clean). With the non-vacuity witness below, that closes
+CACHE-FV-01 for the instruction cache.
+
+**Non-vacuity, and why it was not optional.** The harness always ended with
+`cover (core_read)`, whose own comment reads "the proof is worthless if the
+environment cannot even complete a read of the tracked word" — but both `.sby`
+files were `mode bmc`, and sby evaluates cover statements only in `mode cover`.
+The guard had never executed. Against assumptions as strong as this harness
+carries (request stability, two-cycle bus fairness, `chk_word` cacheable), a
+vacuous pass was a live possibility, not a theoretical one. `icache_cover.sby`
+and `dcache_cover.sby` now run it: both reach `core_read` at step 9 in about a
+second. `abc` has no cover mode, so the cover legs use `smtbmc`.
+
+**D$ — does not close, for two independent measured reasons (2026-09-03).**
+
+| | |
+|---|---|
+| the cost | cumulative solve time at the 16 B / 4-line geometry: step 15 = 60 s, step 16 = 235 s, step 17 = 949 s, i.e. **~4x per step**. The I$ grew ~1.4x over the same range and closed. The difference is the write path — a free 4-bit `c_wstrb` every cycle, dirty tracking, and the writeback state machine. |
+| the bound | the sequence the D$ property actually turns on — a writeback of the tracked word, then a core read of it — is **first reachable at step 28**. The configured bound was 26. |
+
+The second reason is the important one. A D$ PASS at 26 would have been sound
+and close to worthless: it would have covered refills and write hits and never
+an eviction, which is the behaviour the property exists to check. Nothing in an
+assertion result reveals this — it took stating the sequence as a cover
+(`wb_seen && core_read`, D$ only) and measuring where it first becomes
+reachable. `dcache.sby` now carries depth 28, the honest minimum, and is out of
+the default suite rather than left looking green at a bound that asks the wrong
+question.
+
+A shorter line was tried as a way in and **rejected as invalid**: at
+`LINE_BYTES = 8` a refill is 2 beats and the whole sequence fits by step 14,
+but that is not a legal configuration of `cache.v`. `W64_BITS` becomes
+`clog2(1) = 0`, so `a_w64` degenerates to `wire [-1:0]` and
+`beat[BEAT_BITS-1:1]` becomes the reversed part-select `beat[0:1]`. Yosys
+accepts both silently and `check -assert` passes, so it elaborates and yields a
+counterexample at step 7 that says nothing about the shipped design. 16 B is
+the geometry floor, and an elaboration check is not a validity check.
+
+**What would close it is not a longer run.** BMC replays the whole
+write-evict-writeback-refill sequence from reset at every step, which is what
+costs 4x a step. The two routes that avoid it are k-induction (`mode prove`)
+with invariants over the tag and dirty state, or decomposing the property so
+writeback correctness is proven from an unconstrained start. Both need the
+machinery the P4 coherence proofs need over the same state, which is where the
+work belongs.
+
+Earlier attempts, kept because they are what led here:
 
 | geometry | depth | reset cycles | reached | outcome |
 |---|---|---|---|---|
@@ -634,36 +684,22 @@ one. It has not returned a verdict. Three configurations were run:
 | reduced (16 B line, 4 lines) | 32 | 3 | step 26 | clean, stopped at 28 min |
 | reduced, `abc bmc3` + `memory_map` | 40 | 3 | step 33 | clean, stopped at 97 min |
 
-The last row is the useful one for whoever picks this up. Switching from
+The last row is what made the I$ closure possible. Switching from
 smtbmc/boolector to `abc bmc3` on a `memory_map`'d netlist — the same trick
 `runchecks.py` already applies to the core's `reg` check — is dramatically
 faster at low depth (step 11 in 0.4 s against minutes per step), because the
-SRAM array stops being an SMT array and becomes plain flops. It still grows
-steeply: by step 33 each additional step costs 10-18 minutes. A bound around
-26 looks like the largest that closes in reasonable time, which covers a cold
-miss, the refill, a read, and a write hit, but not the full evict-writeback-
-refill-reread sequence. Closing that properly is the open item.
+SRAM array stops being an SMT array and becomes plain flops.
 
-**No counterexample was produced at any depth, and no assertion failed at any
-step reached** — but "did not terminate" is not "passed", and it is not being
-recorded as one. The shipped-geometry result is the informative one: a single
-refill is 16 beats, so a bounded proof spends its entire depth inside one line
-transfer and never reaches the sequence that matters (write, evict, writeback,
-refill the replacing line, re-read). That is why `cache.v` grew real geometry
-parameters, and the reduced configuration is a legitimate way to prove the
-protocol — tag compare, dirty tracking, refill assembly order, writeback
-ordering and the fetch buffer are all geometry-independent, and the widths are
-`clog2`-derived so there is no separate code path. What it would *not* cover
-is a defect that only appears at a specific width; the block testbench runs the
-shipped geometry and covers that.
-
-Two lessons worth keeping. The proof cost is dominated by the SRAM array being
-part of the model, which is the thing the P2 `reg_ch0` retune already hinted
+Three lessons worth keeping. The proof cost is dominated by the SRAM array
+being part of the model, which is what the P2 `reg_ch0` retune already hinted
 at: bounded proofs over designs with large arrays scale badly, and the fix is
-always to shrink what is being unrolled rather than to wait longer. And a
-third of the first reduced-geometry run's depth was spent sitting in reset —
-15 cycles of a 40-cycle bound — which is pure waste in a bounded proof and was
-cut to 3.
+to shrink what is unrolled rather than to wait longer. A third of the first
+reduced-geometry run's depth was spent sitting in reset — 15 cycles of a 40
+cycle bound — which is pure waste and was cut to 3. And a bound is not
+justified by arithmetic on paper: state the sequence you believe the bound
+reaches as a cover, and measure it. Here the paper estimate was 21 and the
+measured answer was 28, which is the difference between a proof and a proof of
+the wrong thing.
 
 ### 10.6 P3 status against its exit criteria
 
@@ -671,8 +707,19 @@ cut to 3.
 |---|---|
 | I$/D$ with SRAM macros | **met** — 4 KiB each, `RM_IHPSG13_1P_512x64` data arrays |
 | hit/miss verified | **met** — block-level beat counting plus the system legs |
-| still 44/44 formal | **met for the 5-stage core** — 44/44 re-observed after all P3 work. The multicycle suite was not re-run; unchanged since `a2b2653` where it was 44/44 |
-| *(added by D22)* cache proven separately | **open** — CACHE-FV-01 has not returned a verdict |
+| still 44/44 formal | **met, both cores, both measured** — 5-stage 44/44 re-observed after all P3 work; multicycle 44/44 re-run 2026-09-03 |
+| *(added by D22)* cache proven separately | **met for the I$** — CACHE-FV-01 PASS at depth 26 with a non-vacuity witness. **Open for the D$**, with the reason now measured rather than "no verdict": ~4x per step, and a bound of 28 needed to reach an eviction |
 
-P3 is therefore substantially complete but not closed. The remaining work is
-one uninterrupted proof run plus a confirming core suite, not new design.
+P3 is closed on three of four criteria and knowingly open on the fourth. The
+change since 2026-08-31 is that the open item stopped being "the proof did not
+return" and became a specific, measured statement: BMC from reset cannot reach
+the D$ eviction sequence at any affordable cost, and the route through it is
+k-induction or a decomposed property, which is P4 machinery. That is a
+milestone exit, not a milestone stall — but it is an exit with one criterion
+deliberately unmet, and P4 inherits it.
+
+Two things were found while closing this out that were not part of the plan,
+both recorded above: the non-vacuity guard in the harness had never run because
+of a `mode bmc` / `mode cover` mismatch, and the D$ bound was below the depth at
+which the behaviour it proves can occur. Neither would have shown up in a
+passing result.

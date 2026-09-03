@@ -196,7 +196,7 @@ overtake.
 | CACHE-BM-01 | Partial writes (SB/SH) go through the macro's per-bit mask with no read-modify-write | `dv/cache` directed |
 | CACHE-UNC-01 | Addresses at or above CACHEABLE_LIMIT bypass the cache every time and are never cached | `dv/cache` directed + beat counting |
 | CACHE-FLT-01 | A bus fault during refill propagates to the core and leaves no valid line behind | `dv/cache` directed |
-| CACHE-FV-01 | **The cache is transparent: a read returns the last value written to that address** | F (`dv/formal/cache`, one-address abstraction) |
+| CACHE-FV-01 | **The cache is transparent: a read returns the last value written to that address** | F (`dv/formal/cache`, one-address abstraction). **I$ PASS** at depth 26 (2026-09-03) with a `mode cover` non-vacuity witness. **D$ open**: BMC needs depth 28 to reach an eviction and grows ~4x per step, so it does not close — see RETARGET.md §10.5 for the two measurements and the k-induction route out |
 | CACHE-SYS-01 | Core + I$ + D$ retire an identical instruction stream to the no-cache configuration | ISS lockstep, 4th regression leg |
 
 **Note on what the existing suites could not measure.** Every directed and
@@ -212,6 +212,15 @@ the gap was that the workload could not exhibit the property being built.
 core's riscv-formal wrapper. The core keeps its own 44/44 at its own ports, and
 the cache is proven separately against CACHE-FV-01. Rationale and the measured
 proof-cost argument are in RETARGET.md D22 and §9.3.
+
+**Note on non-vacuity.** Every `mode bmc` config in `dv/formal/cache` has a
+matching `*_cover.sby`, and both are required for the result to count. This is
+not ceremony: the harness carried a `cover` guarding exactly this and it had
+never executed, because sby evaluates cover statements only in `mode cover`.
+A bounded proof under strong assumptions is only as good as the evidence that
+the assumptions leave the interesting behaviour reachable — and for the D$,
+measuring that is what showed the bound had been set below the depth at which
+an eviction can happen at all.
 
 ## 5. Coverage model
 

@@ -30,4 +30,6 @@ pd/designs/sram_smoke/lib/
 # generated formal check trees and sim artifacts
 dv/formal/cache/icache/
 dv/formal/cache/dcache/
+dv/formal/cache/icache_cover/
+dv/formal/cache/dcache_cover/
 dv/cache/out/

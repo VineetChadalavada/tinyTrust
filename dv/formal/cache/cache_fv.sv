@@ -80,8 +80,19 @@ module cache_fv (
     // proven. What this does NOT cover is a bug that only appears at a
     // specific width — the block-level testbench in dv/cache/ runs the
     // shipped geometry and is what covers that.
-    localparam FV_LINE_BYTES = 16;
-    localparam FV_LINES      = 4;
+    //
+    // Overridable so a run can trade one kind of coverage for another without
+    // a second copy of the harness. Defaults are the 16 B / 4-line geometry
+    // described above; dcache_wb.sby lowers LINE_BYTES to 8. See that file for
+    // why, and for what the smaller line stops covering.
+`ifndef FV_LINE_BYTES
+  `define FV_LINE_BYTES 16
+`endif
+`ifndef FV_LINES
+  `define FV_LINES 4
+`endif
+    localparam FV_LINE_BYTES = `FV_LINE_BYTES;
+    localparam FV_LINES      = `FV_LINES;
 
     // ---- unconstrained core-side stimulus ----
     (* anyseq *) reg        c_valid;
@@ -215,6 +226,28 @@ module cache_fv (
         if (rst_n && c_valid && c_ready && (c_addr < CACHEABLE_LIMIT))
             assert (!c_fault);
     end
+
+    // Cover: did the bound actually reach the eviction sequence? For the D$
+    // the property only bites once a dirty line has been written back and the
+    // word re-read through a later refill -- write, evict, writeback, refill
+    // the replacing line, re-read. Whether a given depth reaches that is a
+    // question about the design, not one to settle with arithmetic on paper,
+    // so it is stated as a cover and checked. This is what justifies the
+    // bound in dcache_wb.sby; if it ever stops being reachable there, the
+    // bound is too small and the assertion result means less than it appears.
+`ifdef DCACHE
+    reg wb_seen;
+    always @(posedge clk) begin
+        if (!rst_n)
+            wb_seen <= 1'b0;
+        else if (mem_write)
+            wb_seen <= 1'b1;
+    end
+    always @* begin
+        if (rst_n && wb_seen && core_read)
+            cover (1);
+    end
+`endif
 
     // Cover: the proof is worthless if the environment cannot even complete a
     // read of the tracked word, which from a cold cache requires a full
