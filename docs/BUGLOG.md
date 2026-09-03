@@ -221,3 +221,91 @@ Mandatory fields: symptom, root cause, fix commit, regression test, found-by.
   environment able to reach it — which is also exactly the timing an I$ will
   produce at P3, so the bug would otherwise have surfaced there as a
   regression in already-signed-off RTL.
+
+---
+
+## BUG-006 — cache formal suite would have reported a counterexample as PASS (recurrence of BUG-003)
+
+- **Status:** fixed
+- **Label:** bug/tooling (false green — the same class as BUG-003, reintroduced
+  in a different runner)
+- **Symptom:** none observed, because the caches were in fact correct. That is
+  the problem: `dv/formal/cache/run.ps1` decides pass/fail from
+  `$LASTEXITCODE`, and both cache `.sby` files carried `expect pass,fail`. SBY
+  treats an *expected* FAIL as a clean exit, so a genuine cache counterexample
+  would have exited 0 and been reported as a passing suite.
+- **Root cause:** BUG-003 recorded exactly this lesson — "Exit code is not the
+  verdict here" — and fixed it in `runchecks.py` by parsing the
+  `DONE (STATUS, …)` line instead. `dv/formal/cache/run.ps1` was written later,
+  for P3, and re-derived its own pass/fail from the exit code, reintroducing
+  the trap by a different route. The lesson was recorded in this log but not in
+  the code the next runner was copied from, which is the actual failure: a
+  buglog entry does not defend the next file anyone writes.
+- **Fix (`21c451e`) — `icache.sby`, `dcache.sby`:** `expect pass,fail` →
+  `expect pass`, so a FAIL becomes an *unexpected* outcome and SBY exits
+  nonzero. Each file carries a comment pointing at the `runchecks.py` note, so
+  the reasoning is at the site of the setting rather than only in the log.
+- **Regression test:** the default suite runs green (exit 0) with the corrected
+  configs, and the mechanism was observed working during P4 groundwork: a
+  `mode bmc` run with `expect pass` that hit a real counterexample exited 2,
+  not 0.
+- **Found-by:** reading `runchecks.py`'s own comment while picking up the open
+  CACHE-FV-01 item — not by any failing test, which is consistent with the
+  defect class.
+
+---
+
+## BUG-007 — the cache proofs' non-vacuity guard had never executed
+
+- **Status:** fixed
+- **Label:** bug/verification-environment (a proof that could have been vacuous
+  and would have looked green)
+- **Symptom:** none observed; the proofs reported normally.
+- **Root cause:** `cache_fv.sv` ends with `cover (core_read)` under a comment
+  stating that "the proof is worthless if the environment cannot even complete
+  a read of the tracked word". Both `.sby` files are `mode bmc`, and SBY
+  evaluates cover statements **only** in `mode cover` — so that guard was dead
+  code from the day it was written. It matters here rather than being a
+  formality: the harness assumes request stability, two-cycle bus fairness and
+  a cacheable `chk_word`, and an over-constrained environment yielding a
+  vacuous pass was a live possibility, not a theoretical one.
+- **Fix (`21c451e`) — new `icache_cover.sby` / `dcache_cover.sby`:**
+  `mode cover`, engine `smtbmc` (abc rejects cover mode outright:
+  "Invalid engine 'abc' for cover mode"). `run.ps1` runs both legs by default,
+  and VPLAN §4.5 now states that a bmc config without a matching cover run is
+  not a result.
+- **Regression test:** both reach `core_read` at step 9 in about a second, and
+  the cover legs are in the default suite, so the guard cannot silently stop
+  running again.
+- **Found-by:** reading the harness while picking up the open CACHE-FV-01 item.
+
+---
+
+## BUG-008 — the D$ proof bound was below the depth at which the proven behaviour can occur
+
+- **Status:** fixed as to the bound; the D$ proof itself remains open (see
+  RETARGET.md §10.5)
+- **Label:** bug/verification-environment (a proof that would have been sound
+  and nearly meaningless)
+- **Symptom:** `dcache.sby` was configured at depth 26 and understood to cover
+  the cache's write-back behaviour. It cannot: the sequence the D$ property
+  actually turns on — a writeback of the tracked word, then a core read of it —
+  is first reachable at **step 28**.
+- **Root cause:** the bound was chosen by arithmetic on paper. At the reduced
+  geometry a refill is 4 beats, so the write-evict-writeback-refill-reread
+  sequence was estimated to "fit in ~25 cycles"; the estimate was 21 and the
+  measured answer is 28. Nothing in an assertion result exposes the gap — a
+  PASS at 26 would have been perfectly sound, and would have covered refills
+  and write hits and *never an eviction*, which is the behaviour the property
+  exists to check.
+- **Fix (`21c451e`) — `cache_fv.sv`, `dcache.sby`, `dcache_cover.sby`:** the
+  sequence is stated as a cover (`wb_seen && core_read`, D$ only) so the bound
+  is justified by measurement rather than by estimate; `dcache.sby` carries
+  depth 28, the measured minimum, and is excluded from the default suite rather
+  than left looking green at a bound that asks the wrong question.
+- **Regression test:** `dcache_cover.sby` runs at depth 32 and reaches both
+  covers. If the eviction cover ever stops being reachable, the bound is wrong
+  again and the suite says so instead of passing quietly.
+- **Found-by:** adding the cover from BUG-007 and then asking the same question
+  of the D$ — "does the bound reach the thing being proven?" — which had not
+  been asked of either cache.
