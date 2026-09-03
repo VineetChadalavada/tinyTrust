@@ -128,13 +128,39 @@ module cache #(
     // ------------------------------------------------------------------
     // Tag array (flops, D19)
     // ------------------------------------------------------------------
-    reg [TAG_BITS-1:0] tag_q   [0:LINES-1];
-    reg                valid_q [0:LINES-1];
-    reg                dirty_q [0:LINES-1];   // trimmed away when WRITABLE=0
+    // Line state, 2 bits (D24). This replaces the {valid, dirty} pair rather
+    // than sitting beside it: the pair was already 2 bits and MESI is 4
+    // states, so the coherence state costs nothing here. Keeping a separate
+    // valid bit would permit `valid=0` with `state=M`, a contradiction that
+    // would then have to be proven unreachable rather than being structurally
+    // impossible.
+    //
+    // The encoding is chosen so the two predicates the datapath actually asks
+    // for stay single-gate: valid is "any bit set", dirty is "both bits set".
+    localparam [1:0] ST_I = 2'b00,   // invalid
+                     ST_S = 2'b01,   // shared, clean, other caches may hold it
+                     ST_E = 2'b10,   // exclusive, clean, no other cache holds it
+                     ST_M = 2'b11;   // modified, dirty, exclusively held
+    //
+    // ST_S is not reachable in this revision and that is deliberate: with one
+    // cache there is nothing to share with, so a fill always lands in E. It
+    // becomes reachable when the snoop port arrives with the bus, which is
+    // also when the transitions that enter it exist. There is intentionally no
+    // COHERENT parameter yet -- a parameter that selects logic which has not
+    // been written would silently give a non-coherent cache to anyone who set
+    // it.
+    //
+    // MOESI (P5) needs a fifth state and therefore a third bit -- +LINES flops
+    // per D$. Not free, unlike MESI; see COHERENCE.md 2.2.
 
-    wire tag_match = valid_q[a_index] && (tag_q[a_index] == a_tag);
+    reg [TAG_BITS-1:0] tag_q   [0:LINES-1];
+    reg [1:0]          state_q [0:LINES-1];
+
+    wire [1:0] a_state = state_q[a_index];
+
+    wire tag_match = (a_state != ST_I) && (tag_q[a_index] == a_tag);
     wire hit       = c_valid && cacheable && tag_match;
-    wire victim_dirty = (WRITABLE != 0) && valid_q[a_index] && dirty_q[a_index];
+    wire victim_dirty = (WRITABLE != 0) && (a_state == ST_M);
 
     // ------------------------------------------------------------------
     // Data array
@@ -358,8 +384,7 @@ module cache #(
             beat     <= {BEAT_BITS{1'b0}};
             fb_valid <= 1'b0;
             for (i = 0; i < LINES; i = i + 1) begin
-                valid_q[i] <= 1'b0;
-                dirty_q[i] <= 1'b0;
+                state_q[i] <= ST_I;
                 tag_q[i]   <= {TAG_BITS{1'b0}};
             end
         end else begin
@@ -376,10 +401,10 @@ module cache #(
                         line_base <= {a_tag, a_index, {OFF_BITS{1'b0}}};
                         wb_tag    <= tag_q[a_index];
                         // the line is in flux from here until the fill lands
-                        valid_q[a_index] <= 1'b0;
+                        state_q[a_index] <= ST_I;
                         state     <= victim_dirty ? S_WB_RD : S_FILL;
                     end else if (hit && is_write && (WRITABLE != 0)) begin
-                        dirty_q[a_index] <= 1'b1;   // write completed this cycle
+                        state_q[a_index] <= ST_M;   // write completed this cycle
                     end else if (hit) begin
                         state <= S_READ;            // SRAM read in flight
                     end
@@ -432,8 +457,11 @@ module cache #(
                                 fill_lo <= m_rdata;
                             if (beat == (BEATS-1)) begin
                                 tag_q[a_index]   <= a_tag;
-                                valid_q[a_index] <= 1'b1;
-                                dirty_q[a_index] <= 1'b0;
+                                // E, not S: nothing else holds the line.
+                                // Single-core, so there is no other cache at
+                                // all; once the snoop port lands, a sharer
+                                // asserting snoop_shared is what selects S.
+                                state_q[a_index] <= ST_E;
                                 fb_valid <= 1'b0;   // may have replaced its line
                                 state <= S_IDLE;    // request re-runs, now a hit
                             end else begin
