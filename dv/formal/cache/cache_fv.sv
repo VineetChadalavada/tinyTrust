@@ -168,6 +168,42 @@ module cache_fv (
         end
     end
 
+`ifdef FV_DATA_ABSTRACT
+    // ---- data abstraction (data independence) ----
+    // The cache never branches on a data value. In cache.v, c_wdata, m_rdata
+    // and sram_dout appear only in assignments and in one mux whose select is
+    // an *address* bit (a_hi); no comparison, no case, nothing in the FSM. A
+    // design with no data-dependent control is data-independent, so the set of
+    // values the environment may offer can be shrunk without weakening what
+    // the transparency property proves about routing and storage.
+    //
+    // Each byte is restricted to 0x00 or 0xFF. That still lets the solver give
+    // any two byte positions distinguishable values, so a byte steered to the
+    // wrong offset, half or line is still caught -- which is the entire class
+    // of defect this property exists to find. The reachable data space drops
+    // from 2^32 per word to 2^4, which is the point: PDR was drowning in the
+    // width of the datapath, not in the depth of the protocol.
+    //
+    // What this gives up: a defect that needs three or more distinct byte
+    // values to expose. For a data-oblivious design that class is empty by
+    // construction, but the assumption is doing real work and is written down
+    // rather than buried in a script.
+    always @* begin
+        assume (c_wdata[7:0]        == 8'h00 || c_wdata[7:0]        == 8'hFF);
+        assume (c_wdata[15:8]       == 8'h00 || c_wdata[15:8]       == 8'hFF);
+        assume (c_wdata[23:16]      == 8'h00 || c_wdata[23:16]      == 8'hFF);
+        assume (c_wdata[31:24]      == 8'h00 || c_wdata[31:24]      == 8'hFF);
+        assume (m_rdata_free[7:0]   == 8'h00 || m_rdata_free[7:0]   == 8'hFF);
+        assume (m_rdata_free[15:8]  == 8'h00 || m_rdata_free[15:8]  == 8'hFF);
+        assume (m_rdata_free[23:16] == 8'h00 || m_rdata_free[23:16] == 8'hFF);
+        assume (m_rdata_free[31:24] == 8'h00 || m_rdata_free[31:24] == 8'hFF);
+        assume (init_val[7:0]       == 8'h00 || init_val[7:0]       == 8'hFF);
+        assume (init_val[15:8]      == 8'h00 || init_val[15:8]      == 8'hFF);
+        assume (init_val[23:16]     == 8'h00 || init_val[23:16]     == 8'hFF);
+        assume (init_val[31:24]     == 8'h00 || init_val[31:24]     == 8'hFF);
+    end
+`endif
+
     // Bus fairness: memory answers within two cycles, so the bound is spent
     // on cache behaviour rather than on stalled refills.
     reg [1:0] stall_cnt;

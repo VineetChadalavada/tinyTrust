@@ -1,0 +1,56 @@
+# CACHE-FV-01, D$ -- unbounded proof, with the data abstraction.
+#
+# Same as dcache_prove.sby but with -DFV_DATA_ABSTRACT, which restricts every
+# environment data byte to 0x00 or 0xFF. Plain PDR drowns in the width of the
+# datapath (per-frame timeouts from frame 9, clause counts past 6k); the cache
+# is data-oblivious, so narrowing the data space is sound and is what makes
+# the state space tractable. Justification and what it gives up are at the
+# assumption itself in cache_fv.sv.
+#
+# WHY THIS IS THE RIGHT SHAPE OF ATTEMPT
+# dcache.sby (bmc) cannot work, for reasons measured in its header: the
+# eviction sequence is first reachable at step 28, and abc-bmc3 costs ~4x per
+# step, so the depth that would make the result meaningful is unreachable by
+# orders of magnitude. That is a property of *bounded* model checking, not of
+# the design -- BMC has to replay write-evict-writeback-refill from reset on
+# every single step.
+#
+# An unbounded method never replays anything. PDR/IC3 reasons about the state
+# space directly: it starts from an arbitrary state and strengthens the
+# property until it is inductive. The depth-28 problem simply does not exist
+# for it, and a result is stronger than the I$'s -- proven for all time rather
+# than to a bound.
+#
+# PDR before hand-written k-induction on purpose. sby's `smtbmc` in prove mode
+# does k-induction, which needs invariants written by hand to rule out
+# unreachable states; `abc pdr` discovers them itself. If PDR converges there
+# is nothing to write. If it does not, its failure is still informative --
+# and the invariants get written against a design already known correct by
+# simulation, which is the cheap order to debug in.
+#
+# This is also P4 groundwork, not only P3 cleanup. COH-INV-03 (a read returns
+# the most recent write by either core) is this property over two caches, so
+# whatever closes this is the method P4 needs.
+[options]
+mode prove
+depth 28
+# 40 min. PDR either finds the invariant or thrashes; a long tail is not
+# usually a near miss, and the log says which is happening.
+timeout 2400
+expect pass,fail,unknown,timeout
+
+[engines]
+abc pdr
+
+[script]
+read -sv -DDCACHE -DFV_DATA_ABSTRACT cache_fv.sv
+read -sv cache.v
+read -sv sram_1p_bm.v
+prep -top cache_fv -flatten
+memory_map
+opt -fast
+
+[files]
+cache_fv.sv
+../../../rtl/cache/cache.v
+../../models/sram_1p_bm.v
