@@ -1,37 +1,42 @@
-# TinyTrust v2 — Full-Die Retarget
+# Version 2: Moving to a Full Custom Chip
 
-*Status: ADOPTED and in execution — proposed 2026-08-16, P0–P2 complete 2026-08-30 (see §7 and §9)*
-*Supersedes vehicle/microarchitecture decisions in [ARCHITECTURE.md](ARCHITECTURE.md) §2, §10*
-*Parent: [REQUIREMENTS.md](REQUIREMENTS.md)*
+*Status: adopted and in progress — proposed 2026-08-16, groundwork finished
+2026-09-03.*
+*Replaces the target and processor decisions in [ARCHITECTURE.md](ARCHITECTURE.md)
+§2 and §10.*
+*Parent: [REQUIREMENTS.md](REQUIREMENTS.md). Current build order:
+[TAPEOUT_PLAN.md](TAPEOUT_PLAN.md).*
 
 ---
 
 ## 1. What changed and why
 
-TinyTrust v1 was scoped as a **single-core, area-first, 16-tile Tiny Tapeout**
-security SoC. v2 retargets it to a **full custom die with a real MPW
-submission**, and adds a **5-stage pipeline** and a **2-core cache-coherent
-memory system (MESI and MOESI)**.
+Version 1 was a **single-processor microcontroller squeezed into 16 tiles** of a
+shared manufacturing run, where area was the binding constraint on every
+decision.
 
-The driver is a deliberate change of goal: v1 optimized for *fitting*; v2
-optimizes for *demonstrating microarchitecture depth on real silicon*. The
-reference point is [noah-gigler/hft-chip](https://github.com/noah-gigler/hft-chip)
-(ETH Zürich VLSI II) — IHP SG13G2, 2500×2000 µm, QFN-64, DRC + LVS clean,
-Yosys → OpenROAD → KLayout → Calibre.
+Version 2 targets a **full custom chip**, and adds a **5-stage pipeline** and a
+**two-core memory system with cache coherence** (both MESI and MOESI).
 
-**This is not an incremental change.** It reverses the top design principle
-and three decision-log entries. The reversals are recorded here rather than
-edited silently into ARCHITECTURE.md, so the v1 reasoning stays legible —
-"here is what I optimized for, here is what changed, here is what that cost"
-is a better story than a spec that pretends it was always this way.
+The reason is a deliberate change of goal. Version 1 optimised for *fitting*.
+Version 2 optimises for *showing real processor design depth on real silicon*.
+The reference point is [noah-gigler/hft-chip](https://github.com/noah-gigler/hft-chip)
+(ETH Zürich), which used the same manufacturing process, the same open-source
+tools, and a 2500 × 2000 µm die.
+
+**This is not a small change.** It reverses the project's top design principle
+and three entries in the decision log. Those reversals are recorded here rather
+than quietly edited into ARCHITECTURE.md, so the version 1 reasoning stays
+readable. "Here is what I optimised for, here is what changed, here is what that
+cost" is a better story than a specification pretending it was always right.
 
 ### Design principles, re-ordered
 
-| | v1 | v2 |
+| | version 1 | version 2 |
 |---|---|---|
-| 1 | **Area first** — every block judged in GE | **Verifiability first** — coherence is where designs die |
-| 2 | Verifiability second | **Microarchitecture depth second** — pipeline, caches, coherence are the point |
-| 3 | Performance a distant third | Area third — a 2×2 mm die is pad-limited, not core-limited |
+| 1 | **Area first** — every block judged by size | **Verifiability first** — cache coherence is where designs die |
+| 2 | Verifiability second | **Design depth second** — the pipeline, caches and coherence are the point |
+| 3 | Speed a distant third | Area third — a 2 × 2 mm chip is limited by its pins, not its logic |
 
 ---
 
@@ -39,708 +44,695 @@ is a better story than a spec that pretends it was always this way.
 
 | Old | Was | Now | Why it flipped |
 |---|---|---|---|
-| **D1** | Multicycle core; a pipeline's throughput is wasted stalling on ~10–20 cycle XIP fetch | **5-stage pipeline** | **The cache is what justifies the pipeline.** D1's rationale was entirely a consequence of having no instruction cache — with an I$, a hit is 1 cycle and the pipeline finally has something to pipeline. These are not two independent features; adding the pipeline without the cache would have been the mistake D1 correctly identified. |
-| **D3** | DFF register file | unchanged, but pressure removed | With SRAM macros and a full die, the latch-file fallback is dead. Keep DFFs. |
-| **D5** | Iterative 1-bit/cycle shifter; "worst-case 31 extra cycles per shift is invisible next to fetch cost" | **32-bit barrel shifter** (in the 5-stage core only) | D5's premise was the same one D1 rested on: fetch dominates, so EX latency is free. It is not free once EX is a pipeline stage — a 31-cycle shift stalls every instruction behind it, and the whole point of the pipeline is that they are there. Measured cost is well under the 0.6–0.8 kGE D5 itself predicted for a barrel shifter, and it *removes* proof cost: the multicycle riscv-formal config needs six depth-60 overrides (`insn_sll/srl/sra/slli/srli/srai`) purely to let a 31-cycle shift finish inside the bound, and the 5-stage config needs none. The multicycle core keeps the iterative shifter. |
-| **D10** | Single outstanding bus transaction | **Multi-master shared bus with snoop channel** | Coherence requires ≥2 masters and a broadcast snoop path by definition. This is the single largest verification-surface increase in v2. |
-| **§10** | Area budget in Tiny Tapeout tiles (16 tiles = 0.256 mm²) | Area budget in mm² on a ~2×2 mm die | Obsolete. The tile-capacity model and trim ladder no longer apply. |
+| **D1** | One instruction at a time; a pipeline's speed is wasted waiting on 10–20 cycle flash fetches | **5-stage pipeline** | **The cache is what justifies the pipeline.** D1's reasoning was entirely a consequence of having no instruction cache. With one, a hit takes 1 cycle and the pipeline finally has something to work on. These are not two independent features — adding the pipeline *without* the cache would have been exactly the mistake D1 correctly identified. |
+| **D3** | Flip-flop register file | unchanged, but the pressure is gone | With memory blocks available and a full chip, the latch-based fallback is dead. Keep flip-flops. |
+| **D5** | Shifter moving 1 bit per cycle; "31 extra cycles is invisible next to fetch cost" | **Single-cycle barrel shifter** (pipelined core only) | D5 rested on the same premise as D1: fetch dominates, so execution time is free. It is not free once execution is a pipeline stage — a 31-cycle shift stalls every instruction behind it, and the whole point of a pipeline is that there *are* instructions behind it. The measured cost came in well under the 0.6–0.8 kGE D5 itself predicted, and it *reduces* proof cost: the old core's proof setup needs six checks raised to depth 60 purely so a 31-cycle shift can finish, and the pipelined one needs none. The old core keeps its iterative shifter. |
+| **D10** | One bus transfer at a time | **Multiple masters on a shared bus, with a snoop channel** | Coherence needs at least two masters and a broadcast path by definition. This is the single largest increase in what has to be verified. |
+| **§10** | Area budget in shuttle tiles (16 tiles = 0.256 mm²) | Area budget in mm² on a roughly 2 × 2 mm chip | Obsolete. The tile model and its trim ladder no longer apply. |
 
-**D2 (RV32E) is REVERSED — the core is now RV32I** (signed off 2026-08-16).
-D2's entire justification was that a 32×32 DFF register file "alone [is]
-larger than the rest of the core." On a 4 mm² die that argument is gone.
-See D18 for what it bought.
+**D2 (16 registers) is reversed — the processor now has all 32** (signed off
+2026-08-16). D2's entire justification was that a 32 × 32-bit flip-flop register
+file "alone is larger than the rest of the core". On a 4 mm² chip that argument
+is gone. See D18 for what the reversal bought.
 
-Implemented and verified the same day: `regfile.v` widened to 32 entries,
-the `rve_viol` illegal-instruction path deleted from `core.v`, the ISS
-widened to 32 registers, the `rv32e_ok` assumption removed from the formal
-wrapper, directed test `CPU-RVE-01` (x16+ traps) replaced by `CPU-RVI-01`
-(x16+ are ordinary registers, exercised in every field position), and the
-random generator widened to all 32. Lockstep co-sim re-run green: 16/16
-directed + 12/12 random, 45,612 instructions, 0 mismatches.
+Implemented and verified the same day: the register file widened to 32 entries,
+the illegal-register trap deleted, the reference model widened to 32, the
+matching assumption removed from the proof setup, the directed test for
+"registers above 15 must trap" replaced by one confirming they are ordinary
+registers exercised in every position, and the random generator widened. The
+comparison run came back green: 16 of 16 directed tests, 12 of 12 random,
+**45,612 instructions, 0 disagreements**.
 
 ---
 
-## 3. New decision log
+## 3. New decisions
 
-| # | Decision | Alternatives rejected | Rationale |
+| # | Decision | What we rejected | Why |
 |---|---|---|---|
-| D11 | **Full custom die (~2×2 mm), not Tiny Tapeout** | 16-tile TT; larger TT tile counts | Own calibration numbers: 1 tile = 2,344 GE, 16 tiles = 37.5 kGE. A single 256 B flop-based cache = 10.9 kGE = 4.7 tiles. Two cores' caches alone exceed the entire budget. Coherence is not expressible in TT. |
-| D12 | **IHP SG13G2 130 nm** | SKY130 via ChipFoundry chipIgnite | (a) €2,400–3,500 open-source MPW vs. $14,950; (b) **ships single-port SRAM macros** (widths 8/16/48/64 bits, depths 64…4096 — see the P3 note in §4; the `x32` named here at proposal time does not exist) — SKY130's open SRAM path is DIY; (c) hft-chip proved the exact flow, and the Croc SoC pad ring is adaptable. Cost: re-run area calibration against sg13g2 std cells. |
-| D13 | **5-stage pipeline** (IF/ID/EX/MEM/WB), full forwarding, 1-cycle load-use stall | 3-stage; 2-stage; keep multicycle | Classic 5-stage is the most-verified structure in existence, has a canonical reference implementation, and is what the ISS/riscv-formal setup already targets via RVFI. Depth beyond 5 buys nothing at 130 nm where the critical path is SRAM access. |
-| D14 | **2 cores**, symmetric | 4 cores; 1 core + accelerator | 2 cores exercise every MESI/MOESI transition including the O-state transfer that distinguishes them. 4 cores multiply verification cost and pad/area without adding a single new protocol state. Bus arbiter stays parameterizable to N. |
-| D15 | **Snooping coherence on a shared bus** | Directory-based; MSI only | At 2 cores a directory is pure overhead — snooping is the correct engineering answer and the one that makes MOESI's Owned state meaningful (cache-to-cache dirty transfer without writeback). |
-| D16 | **One parameterizable coherence controller, `COHERENCE = MESI \| MOESI`** | Pick one; two separate RTL blocks | The Owned state is a superset addition: MOESI = MESI + O + dirty-sharing transitions. One controller with a compile-time parameter yields a *measurement* — writeback traffic and shared-line latency, MESI vs. MOESI, on identical RTL and identical stimulus. That comparison is the deliverable, not the protocol. |
-| D17 | **Write-back, write-allocate caches** | Write-through | MOESI's Owned state is meaningless under write-through — the entire point is deferring the writeback while serving dirty data cache-to-cache. |
-| D18 | **RV32I** — signed off and implemented 2026-08-16 | Stay RV32E | Reverses D2, whose rationale ("a 32×32 DFF file is larger than the rest of the core") was an artefact of the tile budget. RV32I **deletes the `rv32e_ok` fetch assumption from the formal wrapper** — the one environment restriction in the 44/44 suite that shrank the verified space — so the checks now run over the full register file with no ISA-shaping assumption. Also removes ilp32e toolchain friction. Cost: +512 flops/core ≈ +2.7 kGE. |
-| D19 | **Cache data arrays in SRAM macros; tag arrays in flops** | All-flop caches; all-SRAM | Data arrays are large and single-ported — a perfect macro fit. Tags need single-cycle compare *and* a snoop port; duplicating a small flop tag array per cache lets snoops proceed without stalling the core pipeline. |
-| D20 | **Keep the v1 security SoC** (ASCON, PMP, secure boot, SEC/ALERT) | Drop it to reduce scope | It is verified, it is ~15 kGE, and it fits trivially now. A coherent multicore *with* a hardware root of trust is a differentiated project; a coherent multicore alone is a textbook exercise. PMP becomes per-core. |
-| D21 | **4 KiB I$ and D$, 64 B line, direct-mapped** (signed off 2026-08-30) | 2 KiB; 32 B line; 2-way set associative | Capacity fixes the macro exactly: 4 KiB = one `RM_IHPSG13_1P_512x64` with zero waste (and there is no `1024x32` — see §4). Line size is the tag-flop lever: at 64 B a cache has 64 lines and ~1,344 tag flops (~9.1 kGE at the 6.75 GE/flop measured in P1); at 32 B it has 128 lines and ~18 kGE, roughly a whole multicycle core in flops *per cache*, before P4 duplicates the D$ tags for snooping. The cost is an 8-beat refill instead of 4. Direct-mapped because a replacement policy is state, and state is what P4/P5 have to prove things about — the protocol is the hard part and it should not arrive on top of LRU. Supersedes §4's "32 lines × 64 B" note, which described a 2 KiB cache while the same section budgeted 4 KiB macros. |
-| D22 | **Formal boundary stays at the core's ports; the cache is proven separately** (signed off 2026-08-30) | One wrapper over core + cache | Two reasons, one of them measured. The core's architecture does not change at P3, so its 44/44 is a standing property and should not be perturbed by cache proof cost — which keeps the milestone's "still 44/44 formal" true as written rather than as a redefinition. And the cost is real: `reg_ch0` on the bare pipeline needed a CHECK_CYCLE retune to close at all (§9.3), and folding in tag/data state and refill sequencing is the direction that made it intractable. The cache instead gets its own invariant — a read returns the last value written to that address, i.e. the cache is *transparent* — which is both easier to prove and the right foundation for P4, where coherence properties are stated over exactly that model. |
-| D23 | **No duplicate snoop tag array** (P4, 2026-09-03) | Duplicate tags, as D21 assumed; dual-port SRAM tags | Tag duplication solves a single-ported-SRAM conflict this design does not have: D19 put the tag array in flops and only the *data* array is a macro, so a snoop lookup is a second combinational read port — muxes, not a second copy of 1,344 flops. Saves the ~9.1 kGE per D$ that D21 reserved for it, and removes a bug class (two copies that can disagree). Tag *writes* still need arbitration; see COHERENCE.md §5.3. |
-| D24 | **Coherence state replaces `{valid, dirty}` in place** as a 2-bit `state_q` (P4, 2026-09-03) | A separate coherence-state array alongside valid/dirty | The D$ already stores 2 bits per line and MESI has 4 states, so the re-encoding is a rename rather than growth — the only thing MESI adds is splitting `valid && !dirty` into E and S. MOESI is five states and does need a third bit — +64 flops per D$, ~0.43 kGE, which P5's area line must carry rather than inherit MESI's "free". Coherence is free in the tag array here, which inverts the usual intuition. A separate array would permit `valid=0, state=M`, a contradiction that would then have to be proven absent. |
-| D25 | **The I$ stays outside the coherence domain** (P4, 2026-09-03) | I$ snoops invalidations too | The core traps `FENCE.I` and self-modifying code is already unsupported (§10.1), so instruction memory is immutable by construction and an incoherent I$ cannot be observed. Halves the snoop logic and the state space to prove. It is a real restriction — a program writing code for the other core is outside the supported model — and is recorded rather than hidden. |
-| D26 | **Single outstanding bus transaction, round-robin arbiter** (P4, 2026-09-03) | Split-transaction bus with MSHRs | It is the shape the caches already speak — the existing memory port is single-outstanding valid/ready. A split-transaction bus is the more interesting problem but multiplies the state space exactly where coherence bugs live (concurrent transactions to one line), and §8 already carries P4/P5 as the loosest estimate in the plan. Both protocols see the same bus, so the MESI/MOESI comparison stays controlled. |
-| D27 | **Physical signoff moves ahead of coherence** (2026-09-03) | Keep the §7 order: coherence, then signoff | The P0 argument one level up — the chip-level flow (pads, LVS, signoff DRC, GL sim) is the largest remaining unknown, and §7 meets it last on the most complex design. The D16 deliverable is a simulation measurement, so nothing about the headline result depends on what is on the first die. See [TAPEOUT_PLAN.md](TAPEOUT_PLAN.md). |
-| D28 | **S1 boots and runs from on-chip SRAM** (2026-09-03) | QSPI XIP from external flash, as ARCHITECTURE §4 assumes | Removes an unwritten controller, an external part and its pad timing from first silicon. The memory map keeps its regions so firmware carries forward; XIP arrives at S3 with the secure-boot story it exists to serve. |
-| D29 | **S1 keeps the caches** (2026-09-03) | Core-only first chip | The SRAM smoke test proved one macro and explicitly *not* multi-macro placement, channel routing or PDN across an array. S1 retires that gap before a dual-core chip depends on it, and the caches are already verified — integration cost, not design cost. |
+| D11 | **Full custom chip (~2 × 2 mm), not the shared shuttle** | 16 tiles; more tiles | Our own measurements: 1 tile is 2,344 gate equivalents, so 16 tiles is 37.5 kGE. A single 256-byte flip-flop-based cache is 10.9 kGE, or 4.7 tiles. Two cores' caches alone would exceed the whole budget. Coherence simply cannot be expressed at that size. |
+| D12 | **IHP SG13G2, 130 nm** | SKY130 through a commercial service | Three reasons: it costs €2,400–3,500 for an open-source run against $14,950; it **ships ready-made memory blocks** (widths of 8, 16, 48 and 64 bits, depths from 64 to 4096 — see the note in §4; the `x32` part named at proposal time does not exist), where the SKY130 open path is do-it-yourself; and hft-chip proved this exact tool flow, with an adaptable pin ring. The cost is re-running the area measurements against the new cell library. |
+| D13 | **A classic 5-stage pipeline**, full forwarding, one-cycle stall on load-use | 3-stage; 2-stage; keep the old core | The classic 5-stage is the most-verified structure in existence, has a canonical reference implementation, and is what the reference model and proof setup already target. Going deeper buys nothing at 130 nm, where the critical path is memory access. |
+| D14 | **2 cores**, identical | 4 cores; 1 core plus an accelerator | Two cores exercise every MESI and MOESI transition, including the cache-to-cache transfer that distinguishes them. Four multiply the verification effort and the area without adding a single new protocol situation. The arbiter stays written for any number. |
+| D15 | **Snooping coherence on a shared bus** | A directory; the simpler MSI protocol | At two cores a directory is pure overhead. Snooping is the right engineering answer and the one that makes MOESI's Owned state meaningful — passing modified data cache to cache without writing it back. |
+| D16 | **One controller with a switch, `COHERENCE = MESI \| MOESI`** | Pick one; write two separate blocks | Owned is a pure addition: MOESI is MESI plus one state and its transitions. One controller with a compile-time switch produces a *measurement* — memory traffic and shared-data latency, MESI against MOESI, on identical hardware with identical stimulus. **That comparison is the deliverable, not the protocol.** |
+| D17 | **Write-back, write-allocate caches** | Write-through | MOESI's Owned state is meaningless with write-through. The entire point is deferring the write while still serving modified data cache to cache. |
+| D18 | **All 32 registers** — signed off and implemented 2026-08-16 | Stay at 16 | Reverses D2, whose reasoning was an artefact of the tile budget. It also **removes the one environment restriction** in the 44/44 proof suite that shrank the verified space, so the checks now cover the whole register file with no shaping assumption. It removes toolchain friction too. Cost: 512 more flip-flops per core, about 2.7 kGE. |
+| D19 | **Cache data in memory blocks, cache tags in flip-flops** | All flip-flops; all memory blocks | Data arrays are large and single-ported, a perfect fit for a memory block. Tags need a single-cycle comparison *and* a snoop lookup, which flip-flops give cheaply. |
+| D20 | **Keep the version 1 security system** (crypto, memory protection, secure boot, alerts) | Drop it to reduce scope | It is verified, it is about 15 kGE, and it now fits trivially. A coherent multicore *with* a hardware root of trust is a distinctive project; a coherent multicore alone is a textbook exercise. Memory protection becomes per-core. |
+| D21 | **4 KB instruction and data caches, 64-byte lines, direct-mapped** (signed off 2026-08-30) | 2 KB; 32-byte lines; two-way associative | Capacity fixes the memory block exactly: 4 KB is one `RM_IHPSG13_1P_512x64` with nothing wasted. Line size is the real lever on tag storage: at 64 bytes a cache has 64 lines and about 1,344 tag flip-flops (roughly 9.1 kGE at the 6.75 GE per flip-flop measured in P1); at 32 bytes it has 128 lines and about 18 kGE — roughly a whole processor in flip-flops, *per cache*. The cost is an 8-transfer refill instead of 4. Direct-mapped because a replacement policy is extra state, and state is exactly what the coherence proofs have to reason about. The protocol is the hard part and it should not arrive on top of a replacement policy. |
+| D22 | **The proof boundary stays at the processor's edge; the cache is proven separately** (signed off 2026-08-30) | One proof wrapper covering processor and cache together | Two reasons, one of them measured. The processor's architecture does not change when caches are added, so its 44/44 is a standing result and should not be disturbed by cache proof cost. And that cost is real: the register check on the bare pipeline needed retuning to close at all (§9.3), and folding in tag state, data state and refill sequencing is the direction that made it intractable. The cache instead gets its own property — a read returns the last value written to that address, meaning the cache is *invisible* — which is both easier to prove and the right foundation for the coherence work, where the properties are stated over exactly that model. |
+| D23 | **No second copy of the tags for snooping** (2026-09-03) | Duplicate tags, as D21 assumed; dual-ported memory tags | Tag duplication solves a single-ported-memory conflict this design does not have. D19 put the tags in flip-flops and only the *data* array is a memory block, so a snoop lookup is just extra read wiring — not a second copy of 1,344 flip-flops. Saves the roughly 9.1 kGE per data cache that D21 reserved, and removes a class of bug (two copies that can disagree). Tag *writes* still need arbitration; see COHERENCE.md §5.3. |
+| D24 | **The coherence state replaces `valid` and `dirty` in place**, as one 2-bit value (2026-09-03) | A separate coherence-state array alongside them | The data cache already stores 2 bits per line and MESI has 4 states, so this is a rename rather than growth — the only thing MESI adds is splitting "valid and clean" into Exclusive and Shared. MOESI is five states and does need a third bit: 64 more flip-flops per data cache, about 0.43 kGE, which the S2 area budget must carry rather than inherit MESI's "free". Coherence is free in the tag array here, which inverts the usual intuition. A separate array would allow the contradiction "not valid, but modified", which would then have to be proven impossible. |
+| D25 | **The instruction cache stays outside the coherence system** (2026-09-03) | Have it snoop invalidations too | The processor traps the cache-flush instruction and self-modifying code is already unsupported (§10.1), so instruction memory never changes while running and an out-of-date instruction cache cannot be observed. This halves the snoop logic and the situations to prove. It is a real restriction — a program writing code for the other core is outside the supported model — and it is recorded rather than hidden. |
+| D26 | **One bus transfer at a time, round-robin arbiter** (2026-09-03) | Overlapping transfers with miss-tracking registers | It is the shape the caches already speak. Overlapping transfers are the more interesting problem but multiply the situations exactly where coherence bugs live — two requests for the same line at once — and §8 already lists the coherence work as the loosest estimate in the plan. Both protocols see the same bus, so the comparison stays controlled. |
+| D27 | **Manufacturing checks move ahead of the coherence work** (2026-09-03) | Keep the §7 order: coherence, then manufacturing checks | The P0 argument one level up. The chip-level flow — pins, layout-versus-schematic, final rule checks, gate-level simulation — is the largest remaining unknown, and §7 meets it last, on the most complex design. The D16 deliverable is a simulation measurement, so nothing about the headline result depends on what is on the first chip. See [TAPEOUT_PLAN.md](TAPEOUT_PLAN.md). |
+| D28 | **The first chip runs from on-chip memory** (2026-09-03) | Run from external flash, as ARCHITECTURE §4 assumes | Removes an unwritten controller, an external part and its pin timing from first silicon. The memory map keeps its layout so firmware carries forward; running from flash arrives with the secure-boot work it exists to serve. |
+| D29 | **The first chip keeps the caches** (2026-09-03) | A processor-only first chip | The memory block test proved one block and explicitly *not* several placed together, wired between, or powered across. The first chip settles that before a two-core chip depends on it, and the caches are already verified — integration cost, not design cost. |
 
 ---
 
-## 4. Area budget v1.0 (full die) — ESTIMATE, needs recalibration
+## 4. Area budget v1.0 — estimate, later replaced by measurements
 
-**Basis: SKY130 GE numbers extrapolated (NAND2 = 3.7536 µm² = 1 GE).
-These are placeholders until `run_calibration.py` is re-run against the
-sg13g2 liberty file.** Treat every number below as ±30%.
+**Originally extrapolated from version 1 numbers. Treat everything in this
+first table as ±30%.** The measured numbers follow.
 
 | Block | Est. kGE | Notes |
 |---|---|---|
-| 2 × 5-stage core (RV32I + CSR + traps + PMP) | 20–28 | ~10–14 kGE each |
-| 4 × cache tag array + control (dup. tags for snoop) | 12–20 | 32 lines × 64 B assumed; line size is the main lever |
-| 2 × coherence controller (MESI/MOESI FSM + MSHR) | 6–10 | |
+| 2 × pipelined core (with control registers, traps, protection) | 20–28 | about 10–14 each |
+| 4 × cache tag array and control (assuming duplicated tags) | 12–20 | line size is the main lever |
+| 2 × coherence controller | 6–10 | |
 | Shared bus, arbiter, snoop broadcast | 3–5 | |
-| v1 security SoC (ASCON 7.3 + PMP + ROM + QSPI + UART/GPIO/timer) | ~15 | measured or projected in v1 |
-| **Total logic** | **56–78 kGE** | ≈ **0.21–0.29 mm²** of standard cells |
-| SRAM macros: 4 × `RM_IHPSG13_1P_512x64` (4 KiB each) | — | **150,102 µm² = 20.68 kGE each; 4 × = 0.60 mm²** (measured 2026-08-30, see below) |
+| Version 1 security system (crypto 7.3 + protection + ROM + flash + peripherals) | ~15 | measured or projected in version 1 |
+| **Total logic** | **56–78 kGE** | about **0.21–0.29 mm²** of standard cells |
+| Memory blocks: 4 × 4 KB | — | **150,102 µm² = 20.68 kGE each; 4 of them is 0.60 mm²** (measured 2026-08-30) |
 
-At 55% utilization the core lands around **0.4–0.55 mm² plus macros** —
-comfortably inside a 2×2 mm die. **The die will be pad-limited, not
-core-limited**, exactly as hft-chip's was (54% utilization at 2500×2000 µm).
-Pin count, not gates, drives die size from here.
+At 55% occupancy the logic lands around **0.4–0.55 mm² plus the memory blocks**
+— comfortably inside a 2 × 2 mm chip. **The chip will be limited by its pin
+count, not its logic**, exactly as hft-chip's was (54% occupancy at
+2500 × 2000 µm). From here, pins drive the size, not gates.
 
-Minimum MPW area is 0.8 mm², so there is no "too small" risk either.
+The minimum area the manufacturing run sells is 0.8 mm², so there is no risk of
+being too small either.
 
-### Measured sg13g2 numbers — P1, 2026-08-28
+### Measured numbers — P1, 2026-08-28
 
-`synth/calibration/calibrate_sg13g2.py` replaces `run_calibration.py` for v2:
-real Yosys + ABC liberty mapping against `sg13g2_stdcell_typ_1p20V_25C.lib`
-(1 GE = `sg13g2_nand2_1` = 7.2576 µm²), not the old ABC-free primitive
-pricing. The v1 script is kept for the v1 record but its numbers are both
-SKY130 and pre-D18 (it reports `regfile = 480 flops`, i.e. RV32E).
+`synth/calibration/calibrate_sg13g2.py` replaces the version 1 script: real
+synthesis and technology mapping against the actual cell library, where one
+gate equivalent is 7.2576 µm², rather than the old estimate-based pricing. The
+version 1 script is kept for the record, but its numbers are both from the old
+process and from before the 32-register change.
 
-| block | area µm² | kGE | flops | v1 SKY130 estimate | delta |
+| block | area µm² | kGE | flip-flops | v1 estimate | change |
 |---|---|---|---|---|---|
-| **core** (incl. regfile + pmp) | 137,667 | **18.97** | 1,419 | — | — |
-| ├ regfile, standalone | 92,947 | 12.81 | 992 | 6.96 (RV32E) | +84% ¹ |
-| └ pmp, standalone | 10,877 | 1.50 | 112 | 2.54 | −41% |
-| ascon_p | 50,157 | 6.91 | 325 | 9.52 | −27% |
-| bootrom | 6,793 | 0.94 | 0 | 2.15 | −56% |
+| **core** (including registers and protection) | 137,667 | **18.97** | 1,419 | — | — |
+| ├ register file alone | 92,947 | 12.81 | 992 | 6.96 (16 regs) | +84% ¹ |
+| └ protection alone | 10,877 | 1.50 | 112 | 2.54 | −41% |
+| crypto block | 50,157 | 6.91 | 325 | 9.52 | −27% |
+| start-up ROM | 6,793 | 0.94 | 0 | 2.15 | −56% |
 | **top-level total** | **194,618** | **26.82** | | | |
 
-¹ Not comparable directly: v1 measured RV32E (15 registers), this is RV32I
-(31). The register file *flops* alone are 48,611 µm² = 6.7 kGE; the other
-6.1 kGE is read multiplexing, which partly folds into surrounding logic when
-synthesised inside `core` rather than standalone. Do not add the regfile and
-pmp rows to `core` — they are already inside it.
+¹ Not directly comparable: version 1 measured 16 registers, this is 32. The
+register storage alone is 48,611 µm² = 6.7 kGE; the other 6.1 kGE is read
+multiplexing, which partly merges into surrounding logic when synthesised
+inside the core rather than on its own. Do not add the register-file and
+protection rows to the core row — they are already inside it.
 
-The three blocks that *are* comparable all came in 27–56% **below** the v1
-estimate, which is what `run_calibration.py`'s own header predicted ("expect
-the real flow to come in ~10–30% lower"), plus the sky130 → sg13g2 change.
+The three blocks that *are* comparable all came in 27–56% **below** the version
+1 estimate, which is what the old script's own header predicted ("expect the
+real flow to come in 10–30% lower"), plus the change of process.
 
-**What this changes in the table above:**
+### Measured numbers — P2, 2026-08-30
 
-1. **The 10–14 kGE per-core budget is too low.** The *multicycle* core
-   measures **18.97 kGE**; whatever the 5-stage pipeline adds, it adds on top.
-   Treat "2 × core = 20–28 kGE" as a floor of ~38 kGE, not a range.
-2. **The ~15 kGE security-SoC row is optimistic but not yet disproven.**
-   Measured so far: ascon_p 6.91 + bootrom 0.94 = 7.85 kGE. QSPI, UART, GPIO
-   and the timer are still unwritten RTL, so the rest of that row remains an
-   estimate.
-3. **Everything still fits comfortably.** Even at ~40 kGE of cores plus caches
-   and coherence, the P0 harden shows the v1 core alone occupying 0.41 mm² of
-   core area at 42% utilization — the die stays pad-limited, exactly as §4
-   assumed. No architectural consequence; the numbers just stop being guesses.
+The pipelined core measured on the same flow and library. The two cores are
+alternatives, not siblings — a chip takes one or the other, which is why the
+script now prints two totals.
 
-RVFI is excluded from every figure here (`` `ifdef RISCV_FORMAL ``): leaving
-the retire port in costs 21% of core area (174,960 → 137,667 µm²), 544 flops,
-and 383 of 492 port bits. See `pd/designs/tinytrust_core/config.mk`.
-
-Still outstanding for P1: nothing above covers the SRAM macros, whose area
-comes from the PDK and is measured when the cache architecture is committed
-(P3).
-
-### Measured sg13g2 numbers — P2, 2026-08-30
-
-The 5-stage core added by P2 measured on the same flow and the same liberty.
-`core` and `core_p5` are alternatives, not siblings — a top-level total takes
-one or the other, which is why `calibrate_sg13g2.py` now prints two TOTAL rows.
-
-| block | area µm² | kGE | flops | vs. multicycle |
+| block | area µm² | kGE | flip-flops | vs. the old core |
 |---|---|---|---|---|
-| **core** (multicycle, P1 baseline) | 137,363 | **18.93** | 1,419 | — |
-| **core_p5** (5-stage) | 180,652 | **24.89** | 1,787 | **+5.96 kGE (+31.5%), +368 flops** |
-| pmp, standalone | 13,337 | 1.84 | 112 | +0.34 kGE vs. P1's 1.50 |
-| top-level total, with `core` | 194,314 | 26.77 | | |
-| top-level total, with `core_p5` | 237,603 | **32.74** | | |
+| **core** (one instruction at a time, P1 baseline) | 137,363 | **18.93** | 1,419 | — |
+| **core_p5** (pipelined) | 180,652 | **24.89** | 1,787 | **+5.96 kGE (+31.5%), +368 flip-flops** |
+| protection alone | 13,337 | 1.84 | 112 | +0.34 kGE against P1's 1.50 |
+| total with the old core | 194,314 | 26.77 | | |
+| total with the pipelined core | 237,603 | **32.74** | | |
 
-*Corrected 2026-08-30 (P3).* The `core_p5` row first published for P2 read
-179,684 µm² / 24.76 kGE / 1,786 flops. Those numbers were measured **before**
-the BUG-005 fix landed and were stale by one flop: `w_fwd_live`, the register
-that keeps the WB forward alive across a data stall, is exactly one bit, and
-it plus the forwarding mux it feeds accounts for the +968 µm². Re-measured
-against the committed RTL and confirmed reproducible (yosys + ABC give
-180652.1346 µm² on three consecutive runs, so this is a real difference, not
-tool variance). The P2 commit message carries the stale figure; this table is
-the correct one.
+*Corrected 2026-08-30.* The pipelined row first published read 179,684 µm² /
+24.76 kGE / 1,786 flip-flops. Those were measured **before** the BUG-005 fix and
+were stale by exactly one flip-flop: `w_fwd_live`, the register that keeps a
+forwarded value alive across a memory stall, is one bit, and it plus the
+multiplexer it feeds accounts for the extra 968 µm². Re-measured against the
+committed design and confirmed reproducible — the tools give 180652.1346 µm² on
+three consecutive runs, so this is a real difference, not tool variation. The
+P2 commit message carries the stale figure; this table is the correct one.
 
-Three notes on the deltas:
+Three notes on the differences:
 
-1. **+31% for the pipeline is the honest price of P2**, and it is dominated by
-   state, not logic: +367 flops is the four stage boundaries (IF/ID, ID/EX,
-   EX/MEM, MEM/WB) carrying PC, instruction, operands, control and the RVFI
-   payload. The barrel shifter and the extra adders are the smaller half.
-2. **pmp grew 1.50 → 1.84 kGE** because it now has two concurrent check ports:
-   the pipeline checks a data access in MEM and an instruction fetch in IF in
-   the same cycle, which one checker cannot do. The CSR state is shared and
-   only the combinational match/permission chain is duplicated. The multicycle
-   core ties the second port off and yosys trims it — which is visible in the
-   row above: `core` measures 18.93 kGE here against 18.97 at P1, a 0.04 kGE
-   drift from the hierarchy change, not a regression.
-3. **This does not move the floorplan.** §4's revised estimate treated
-   "2 × core" as a floor of ~38 kGE; at 24.76 kGE each the two 5-stage cores
-   are ~50 kGE, and the P0 harden showed the v1 core alone at 0.41 mm² core
-   area with 42% utilization on a 2×2 mm die. The die is still pad-limited.
+1. **+31% for the pipeline is the honest price**, and it is dominated by
+   storage, not logic. The extra 367 flip-flops are the four stage boundaries
+   carrying the program counter, instruction, operands, control signals and the
+   reporting payload. The barrel shifter and extra adders are the smaller half.
+2. **Protection grew from 1.50 to 1.84 kGE** because it now has two check ports:
+   the pipeline checks a data access and an instruction fetch in the same cycle,
+   which one checker cannot do. The register state is shared and only the
+   combinational matching is duplicated. The old core ties the second port off
+   and the tools remove it — visible above, where the old core measures 18.93
+   here against 18.97 at P1. That 0.04 kGE is drift from the hierarchy change,
+   not a regression.
+3. **This does not move the floorplan.** The revised estimate treated two cores
+   as a floor of about 38 kGE; at 24.76 kGE each, two pipelined cores are about
+   50 kGE. The first layout showed the version 1 core alone at 0.41 mm² with
+   42% occupancy on a 2 × 2 mm chip. The chip is still pin-limited.
 
 ---
 
-### Measured SRAM macro numbers — pre-P3, 2026-08-30
+### Measured memory block numbers — before P3, 2026-08-30
 
-From the macro smoke test (`pd/results/sram_smoke/METRICS.md`), which retires
-the §8 GDS-merge risk that P0 deferred. Two corrections to the assumptions
-above, both material to P3:
+From the memory block test (`pd/results/sram_smoke/METRICS.md`), which settles
+the §8 risk that P0 deferred. Two corrections to the assumptions above, both
+important for the cache design:
 
-**The geometry in D12 and in the table above was wrong.** There is no
-`RM_IHPSG13_1P_1024x32`. The platform ships ten single-port macros with widths
-of 8, 16, 48 and 64 bits and depths of 64, 256, 512, 1024, 2048 and 4096. A
-4 KiB array is `RM_IHPSG13_1P_512x64`, not `1024x32`. Cache line and array
-geometry at P3 has to be chosen from what exists.
+**The part named in D12 and in the table above does not exist.** There is no
+`RM_IHPSG13_1P_1024x32`. The process ships ten single-port blocks with widths of
+8, 16, 48 and 64 bits, and depths of 64, 256, 512, 1024, 2048 and 4096. A 4 KB
+array is `RM_IHPSG13_1P_512x64`. Cache geometry has to be chosen from what
+actually exists.
 
-**SRAM area is no longer TBD, and it is the largest single line item.**
+**Memory block area is no longer unknown, and it is the largest single item.**
 
 | | value |
 |---|---|
-| `RM_IHPSG13_1P_512x64` (4 KiB) | 784.48 × 191.34 µm = **150,102 µm² = 20.68 kGE** |
-| 4 × 4 KiB (the §4 budget) | **0.60 mm²** |
-| for comparison, `core_p5` | 179,684 µm² = 24.76 kGE |
+| `RM_IHPSG13_1P_512x64` (4 KB) | 784.48 × 191.34 µm = **150,102 µm² = 20.68 kGE** |
+| 4 × 4 KB (the §4 budget) | **0.60 mm²** |
+| for comparison, the pipelined core | 179,684 µm² = 24.76 kGE |
 
-One 4 KiB SRAM is 0.83× the area of the entire 5-stage core. Four of them is
-0.60 mm², against the 0.4–0.55 mm² §4 projected for *all* standard-cell logic.
-The die stays comfortable — 0.6 + ~0.55 ≈ 1.15 mm² on a 4 mm² die, still
-pad-limited — but SRAM, not logic, now sets the core area, and cache capacity
-is the biggest area lever P3 has.
+One 4 KB memory block is 0.83 times the area of the entire pipelined processor.
+Four of them is 0.60 mm², against the 0.4–0.55 mm² projected for *all* the
+logic. The chip stays comfortable — 0.6 plus about 0.55 is 1.15 mm² on a 4 mm²
+chip, still pin-limited — but memory, not logic, now sets the area, and cache
+capacity is the biggest area lever available.
 
 Two more properties to design against:
 
-- **Power.** The macro is 66.6% of total power in a design that is one SRAM
-  plus a handful of registers (3.62 mW of 5.43 mW).
-- **Hold.** The macro declares a 0.39 ns library hold time on its data inputs,
-  large next to a standard cell. Every flop feeding a cache array will start
-  hold-critical and needs margin budgeted.
+- **Power.** The memory block is 66.6% of total power in a design that is one
+  block plus a handful of registers (3.62 mW out of 5.43 mW).
+- **Hold time.** The block requires its inputs to be held 0.39 ns after the
+  clock edge, which is large next to a standard cell. Every flip-flop feeding a
+  cache array starts out hold-critical and needs margin budgeted.
 
-And one defect to carry: every `RM_IHPSG13_*` Liberty in the platform declares
-`capacitive_load_unit (1,pf)` and then `max_capacitance : 6.4e-14` — the value
-written in farads under a picofarad unit, off by 1e12 — which aborts OpenROAD
-global placement (RSZ-0169) and cannot be overridden from SDC.
-`pd/designs/sram_smoke/patch_sram_lib.sh` corrects a local copy; upstream
-report pending.
+And one defect to carry forward: every memory block's timing file declares its
+capacitance unit as picofarads and then gives a maximum load of `6.4e-14` —
+a value written in farads, off by a factor of 10¹². This aborts the layout
+tool's placement stage and cannot be overridden from the timing constraints
+file. `pd/designs/sram_smoke/patch_sram_lib.sh` corrects a local copy; an
+upstream report is still pending.
 
-## 5. Verification impact
+## 5. What this changes for verification
 
-The existing verification stack survives and mostly still applies:
+The existing testing survives and mostly still applies:
 
-| Leg | v1 status | v2 |
+| Method | version 1 status | version 2 |
 |---|---|---|
-| ISS lockstep co-sim (RVFI) | green | **Per core.** ISS already widened to RV32I (D18). Pipeline changes RVFI timing, not content. |
-| riscv-formal | 44/44 | **Per core.** RV32I would *delete* the `rv32e_ok` wrapper assumption. Pipeline needs depth re-tuning. |
-| ASCON KAT | 66/66 | unchanged |
+| Comparison against the reference model | green | **Per core.** The model already covers 32 registers. The pipeline changes reporting *timing*, not content. |
+| riscv-formal proofs | 44/44 | **Per core.** 32 registers *removes* an assumption. The pipeline needs its depths retuned. |
+| Crypto test vectors | 66/66 | unchanged |
 
-**Two genuinely new verification problems:**
+**Two genuinely new problems:**
 
-1. **Coherence protocol correctness.** The invariants are classic and
-   formally checkable: never two caches in M for one line; a line in O/M is
-   the unique dirty copy; every request eventually completes (no deadlock,
-   no livelock on the arbiter). This is a *strong* formal target — small
-   state space, high-value properties — and should be proven, not simulated.
+1. **Is the coherence protocol correct?** The properties are classic and
+   provable: never two caches holding the same line as modified; a modified or
+   owned line is the unique dirty copy; every request eventually completes, with
+   no deadlock and no starvation at the arbiter. This is a *strong* target for
+   proof — small state space, high-value properties — and should be proven
+   rather than simulated.
+2. **Is memory behaviour correct when both cores run at once?** Random
+   two-core tests against a pair of reference models with a shared memory model.
+   This is where directed testing stops scaling.
 
-2. **Memory consistency under concurrency.** Random multi-core litmus tests
-   against an ISS pair with a reference memory model. This is where directed
-   testing stops scaling.
-
-**Note on UVM (closes ASC-UVM-01).** In v1, the proposed UVM environment for
-`ascon_p` was honestly redundant — the block was already closed by 66/66 KATs
-through a 40-line Icarus testbench, and the env existed for résumé value.
-A **coherent multi-master bus is the canonical UVM application**: multiple
-active agents, a bus monitor, a protocol scoreboard, and a coverage cube over
-(protocol state × request type × requester × responder). Here UVM is the
-right tool for engineering reasons rather than CV reasons. `ASC-UVM-01`
-should be retired and replaced with `COH-UVM-*` testpoints in VPLAN §4.
-
----
-
-## 6. The actual gap: backend
-
-Verification is ahead of hft-chip. **Backend is at zero** — `synth/` contains
-area estimates, nothing more. No floorplan, no P&R, no GDS, no DRC, no LVS.
-
-Target flow (mirrors hft-chip):
-
-```
-SystemVerilog → Yosys → OpenROAD (floorplan · PDN · place · CTS · route)
-              → KLayout (GDS + DRC) → LVS → die render
-```
-
-Every metric quoted in the hft-chip README — max frequency, utilization,
-power, DRC/LVS clean, **and the die render** — is an output of this flow.
-The render is a KLayout screenshot of the finished GDS; it requires no
-silicon. It becomes available the day P&R first closes.
-
-**Known risk:** OpenROAD has reported GDS-merge failures with some SG13G2
-SRAM BITKIT cells (missing GDS/OAS for LEF cells). Hit this early with a
-macro-only smoke test before committing the cache architecture.
+**Note on UVM.** In version 1, the proposed UVM environment for the crypto
+block was honestly redundant — the block was already closed by 66 of 66 test
+vectors through a 40-line testbench, and the environment existed for CV value.
+A **coherent multi-master bus is the textbook application for UVM**: several
+active agents, a bus monitor, a protocol scoreboard, and a coverage grid over
+protocol state, request type, requester and responder. Here it is the right
+tool for engineering reasons rather than CV reasons. The crypto UVM item should
+be retired and replaced with coherence ones.
 
 ---
 
-## 7. Milestones (v2)
+## 6. The real gap: turning the design into a chip
 
-| # | Milestone | Exit criteria | Status |
+Verification is ahead of the reference project. **The path to a physical chip
+was at zero** — `synth/` held area estimates and nothing else. No floorplan, no
+placement, no layout file, no rule checks, no layout-versus-schematic.
+
+The target flow:
+
+```
+Source code → Yosys → OpenROAD (floorplan · power · place · clock · route)
+            → KLayout (layout file + rule checks) → LVS → picture of the chip
+```
+
+Every figure quoted in the reference project's README — maximum frequency,
+occupancy, power, clean rule and equivalence checks, **and the picture of the
+chip** — is an output of this flow. The picture is a screenshot of the finished
+layout and needs no silicon at all. It becomes available the day the layout
+first completes.
+
+**Known risk:** the layout tool has reported failures merging in some of this
+process's memory blocks. Hit this early with a memory-block-only test before
+committing to a cache design.
+
+---
+
+## 7. Milestones
+
+| # | Milestone | Done when | Status |
 |---|---|---|---|
-| **P0** | Backend bring-up | ORFS + sg13g2 running; **existing single core hardened to GDS**; first die render produced. Proves the flow before the RTL grows. | **done** 2026-08-28 |
-| **P1** | Recalibrate | `run_calibration.py` re-run against sg13g2; area budget §4 replaced with measured numbers; D18 (RV32I) signed off | **done** 2026-08-28 |
-| **P2** | 5-stage pipeline | Pipelined core passes ISS lockstep + riscv-formal at the v1 bar; CPI measured vs. multicycle | **done** 2026-08-30 — §9. Lockstep 0 mismatches over 19,326 instructions × 3 memory configs; riscv-formal 44/44 (both cores); CPI 7.784 → 6.208, and 2.237 with fetch free |
-| **P3** | Caches, single core | I$/D$ with SRAM macros; hit/miss verified; still 44/44 formal | **closed 2026-09-03, one criterion knowingly open** — §10. RTL, block-level and system verification green (4 legs, 0 mismatches); riscv-formal 44/44 measured on **both** cores; CPI 7.62 → 2.55; CACHE-FV-01 PASS for the I$ at depth 26 with a non-vacuity witness. Open: the D$ leg, which BMC cannot reach — ~4x per step and a bound of 28 needed for an eviction. Carried to P4 (§10.6) |
-| **P4** | Coherence | 2 cores, shared bus, MESI; protocol invariants formally proven; UVM coherence env; litmus tests | **design opened** 2026-09-03 — [COHERENCE.md](COHERENCE.md). D23–D26 signed off; two planned costs removed (no duplicate snoop tags, MESI free in the existing tag bits). Critical path identified as the k-induction machinery P3 deferred, not the protocol RTL |
-| **P5** | MOESI + measurement | `COHERENCE=MOESI` closes the same suite; writeback-traffic and latency comparison written up |
-| **P6** | Physical signoff | Pad ring, full-chip P&R, timing closure, DRC + LVS clean, GL sim |
-| **P7** | Submission | IHP Open Silicon MPW agreement signed, slot booked, GDS submitted |
+| **P0** | Get the tools working | The flow runs; **the existing processor is turned into a finished layout**; first picture produced. Proves the path before the design grows. | **done** 2026-08-28 |
+| **P1** | Re-measure area | Calibration re-run against the new process; the §4 budget replaced with measurements; 32 registers signed off | **done** 2026-08-28 |
+| **P2** | 5-stage pipeline | The pipelined core passes the reference comparison and the proofs at the version 1 standard; speed measured against the old core | **done** 2026-08-30 — §9. Zero disagreements over 19,326 instructions × 3 memory settings; 44/44 proofs on both cores; CPI 7.784 → 6.208, and 2.237 with fetch free |
+| **P3** | Caches | Instruction and data caches on real memory blocks; hits and misses verified; still 44/44 | **done** 2026-09-03 — §10. Design and all verification green; both cores measured at 44/44; CPI 7.62 → 2.55; instruction cache proven. One criterion knowingly open: the data cache proof (§10.6) |
+| **P4** | Coherence | 2 cores, shared bus, MESI; protocol properties proven; coherence test environment; directed concurrency tests | **design opened** 2026-09-03 — [COHERENCE.md](COHERENCE.md). D23–D26 signed off; two planned costs removed. The critical path is the proof technique P3 deferred, not the protocol hardware |
+| **P5** | MOESI and the measurement | `COHERENCE=MOESI` closes the same suite; the traffic and latency comparison written up | |
+| **P6** | Physical signoff | Pin ring, full-chip layout, timing closure, clean rule and equivalence checks, gate-level simulation | |
+| **P7** | Submission | Manufacturing agreement signed, slot booked, layout submitted | |
 
-**P0 is deliberately first.** The flow is the largest unknown and the thing
-that produces the render; growing the RTL before proving the backend risks
-discovering at P6 that the design cannot be hardened.
+**P0 is deliberately first.** The flow is the largest unknown and the thing that
+produces the picture; growing the design before proving the tool path risks
+discovering at the end that it cannot be built.
 
 **The order below P3 is superseded by [TAPEOUT_PLAN.md](TAPEOUT_PLAN.md)
-(2026-09-03, D27).** The plan is now incremental silicon: a smallest-complete
-single-core chip (S1) is hardened, signed off and submitted *before* the
-dual-core coherent design (S2). The reason is the sentence immediately above,
-applied one level up — P0 proved that a *core* hardens, not that a *chip*
-does, and the current table meets pads, LVS, signoff DRC and gate-level
+(2026-09-03, D27).** The plan is now one chip at a time: a smallest-complete
+single-core chip is laid out, checked and submitted *before* the two-core
+design. The reason is the sentence immediately above, applied one level up — P0
+proved that a *processor* can be built, not that a *chip* can, and the table
+above meets pins, equivalence checking, final rule checks and gate-level
 simulation last, all at once, on the most complex version of the design.
 
-P4 and P5 as written below are not cancelled; they become S2, and the
-MESI/MOESI comparison D16 calls the deliverable continues in RTL in parallel,
-because it is a simulation measurement and never needed silicon. The table is
-left as written rather than edited, for the same reason §2 lists reversed v1
-decisions instead of quietly rewriting them.
+P4 and P5 are not cancelled; they become the second chip, and the MESI/MOESI
+comparison continues in simulation in parallel, because it is a measurement and
+never needed silicon. The table is left as written rather than edited, for the
+same reason §2 lists reversed version 1 decisions instead of quietly rewriting
+them.
 
 ---
 
 ## 8. Open risks
 
-| Risk | Mitigation |
+| Risk | What we do about it |
 |---|---|
-| IHP MPW slot availability and true open-source pricing | Contact IHP directly with the Open Source Request before P2; pricing quoted (€2,400–3,500) is from public schedules and unconfirmed for this design size |
-| SG13G2 SRAM macros + OpenROAD GDS merge issues | **RETIRED 2026-08-30** — the smoke test P0 deferred was finally run (`pd/results/sram_smoke/METRICS.md`): a 4 KiB macro hardens to GDS with 0 router DRC. The BITKIT missing-GDS cells are real but current ORFS already absorbs them via the platform's own `GDS_ALLOW_EMPTY`. Three integration problems had to be solved first, one of them a genuine PDK Liberty defect — see §4 and the metrics file. |
-| Docker allocated only 8 GB RAM | Full-chip P&R may need more; raise WSL2 memory limit before P6 |
-| Coherence verification scope underestimated | It always is. P4/P5 have the loosest estimates in this plan. |
-| Solo project, tape-out has a hard deadline | Unlike v1, a missed shuttle slot costs months. Book the slot *after* P5, not before. |
-| Sunk SKY130 calibration work | ~1 afternoon to redo; the methodology transfers unchanged |
+| Manufacturing slot availability and true open-source pricing | Contact the foundry directly. The quoted €2,400–3,500 is from public schedules and unconfirmed for a design this size |
+| Memory blocks failing in the layout tool | **Retired 2026-08-30** — the test P0 deferred was finally run (`pd/results/sram_smoke/METRICS.md`): a 4 KB block becomes a finished layout with zero routing violations. The missing-data cells are real but the current tool version already handles them. Three integration problems had to be solved first, one of them a genuine defect in the process's own timing files |
+| Only 8 GB of memory allocated to the build environment | Full-chip layout may need more; raise the limit before the physical work |
+| Underestimating the coherence verification effort | It always is. P4 and P5 have the loosest estimates in this plan |
+| Solo project, and manufacturing has a hard deadline | Unlike version 1, a missed slot costs months. Book the slot *after* the design is proven, not before |
+| Wasted version 1 calibration work | About an afternoon to redo; the method transfers unchanged |
 
 ---
 
-## 9. Milestone results: P2 — the 5-stage pipeline
+## 9. Results: P2 — the 5-stage pipeline
 
-*Completed 2026-08-30. Exit criteria from §7: "Pipelined core passes ISS
-lockstep + riscv-formal at the v1 bar; CPI measured vs. multicycle."*
+*Completed 2026-08-30. Required: the pipelined core passes the reference
+comparison and the proofs at the version 1 standard, with speed measured
+against the old core.*
 
 ### 9.1 What was built
 
-`rtl/core/core_p5.v` — IF/ID/EX/MEM/WB, full EX-operand forwarding, one-cycle
-load-use stall. It implements the *same architecture* as `rtl/core/core.v`:
-same ISA subset, same CSR set and WARL rules, same trap causes, same RVFI
-conventions. That is deliberate and it is what makes the rest of this section
-possible — the two cores are checked against the same ISS and the same formal
-suite, so the CPI comparison is a measurement of microarchitecture alone.
+`rtl/core/core_p5.v` — five stages (fetch, decode, execute, memory, write
+back), full operand forwarding, and a one-cycle stall when an instruction needs
+a value still being loaded. It implements the *same architecture* as the old
+core: same instructions, same control registers and rules, same trap causes,
+same reporting conventions. That is deliberate, and it is what makes the rest of
+this section possible — both cores are checked against the same reference model
+and the same proof suite, so the speed comparison measures the microarchitecture
+alone.
 
-Both cores are kept. The multicycle core is not dead code: it is the control
-in the experiment, and it stays in the regression.
+Both cores are kept. The old one is not dead code: it is the control in the
+experiment, and it stays in the regression.
 
-Three structural departures from the v1 datapath, each reversing a v1
-decision (§2):
+Three structural departures from version 1, each reversing a version 1 decision:
 
-| | v1 (`core.v`) | P2 (`core_p5.v`) | why it had to change |
+| | version 1 | P2 | why it had to change |
 |---|---|---|---|
-| Memory ports | one unified, single outstanding (D10) | **split instruction + data** | IF and MEM both want memory in the same cycle; one port serializes them. The TB now arbitrates (data over fetch, grant locked per transaction); P3 hangs the I$ and D$ directly on these two ports. |
-| Shifter | iterative, 1 bit/cycle (D5) | **single-cycle barrel** | A 31-cycle EX stalls every instruction behind it, and in a pipeline there *are* instructions behind it. |
-| Adders | one shared 32-bit adder (D1) | **one per stage** | IF needs PC+4 while EX computes a branch target while MEM holds an effective address. Sharing is not expressible once stages run concurrently. |
+| Memory ports | one shared port, one transfer at a time (D10) | **separate instruction and data ports** | Fetch and memory both want memory in the same cycle; one port forces them to take turns. The testbench arbitrates for now; the caches then hang directly off these two ports. |
+| Shifter | 1 bit per cycle (D5) | **single-cycle barrel** | A 31-cycle execute stalls every instruction behind it, and in a pipeline there *are* instructions behind it. |
+| Adders | one shared (D1) | **one per stage** | Fetch needs the next address while execute computes a branch target while memory holds a load address. Sharing is not expressible once stages run at the same time. |
 
-Two design choices worth stating because they are where a pipeline usually
-goes wrong:
+Two design choices worth stating, because they are where pipelines usually go
+wrong:
 
-- **The commit point is MEM, not WB.** Nothing architectural happens before
-  it. The register file is written in WB, but the *decision* to write is made
-  in MEM, and the data bus is driven in MEM only once no older instruction can
-  still fault. Exceptions are raised in IF (instruction access fault), ID
-  (illegal, ECALL, EBREAK), EX (address misaligned, including the
-  instruction-address-misaligned that the spec reports on the branch itself)
-  and MEM (load/store access fault) — and all of them are *taken* in MEM. That
-  is what makes traps precise and in program order. Branches redirect from EX
-  (a two-bubble penalty); a MEM redirect always outranks an EX one.
-- **SYSTEM is serializing.** CSR/MRET/ECALL/EBREAK/WFI wait in ID until EX and
-  MEM are empty, and the pipeline is flushed behind them on commit. This costs
-  a handful of cycles on a rare instruction and buys three things outright:
-  CSR read-after-write ordering, a privilege change (MRET) that cannot be
-  overtaken by instructions fetched under the old mode, and a pmpcfg/pmpaddr
-  write that cannot be bypassed by an in-flight fetch checked against the old
-  configuration. Design principle 1 for v2 is "verifiability first"; this is
-  what that looks like in practice — a stall instead of a bypass network.
+- **The commit point is the memory stage, not write back.** Nothing
+  architectural happens before it. The register file is written in write back,
+  but the *decision* to write is made in memory, and the data bus is driven only
+  once no older instruction can still fault. Exceptions are detected in fetch,
+  decode, execute and memory — and all of them are *taken* in memory. That is
+  what makes traps precise and in program order. Branches redirect from execute,
+  costing two wasted slots, and a memory redirect always outranks an execute
+  one.
+- **System instructions run alone.** Control-register and privilege
+  instructions wait in decode until the later stages are empty, and the pipeline
+  is flushed behind them. This costs a handful of cycles on a rare instruction
+  and buys three things outright: correct ordering of control-register reads
+  after writes, a privilege change that cannot be overtaken by instructions
+  fetched under the old rules, and a protection-register write that cannot be
+  bypassed by a fetch already checked against the old settings. Version 2's
+  first principle is "verifiability first", and this is what that looks like in
+  practice — a stall instead of a bypass network.
 
-### 9.2 CPI — the exit measurement
+### 9.2 Speed — the exit measurement
 
-23 programs (17 directed + 6 random), **19,326 retired instructions**, the same
-program words fed to both cores in the same run, three memory configurations:
+23 programs (17 directed, 6 random), **19,326 instructions**, the same program
+words fed to both cores in the same run, three memory settings. Lower CPI is
+faster.
 
-| memory configuration | mc CPI | p5 CPI | speedup |
+| memory setting | old core CPI | pipelined CPI | speed-up |
 |---|---|---|---|
-| shared bus, 2–5 cycle latency (`--maxlat 3`, the default) | 7.784 | **6.208** | 1.254× |
-| shared bus, minimum latency (`--maxlat 0`, 3 cycles/access) | 6.153 | **4.142** | 1.485× |
-| zero-wait-state fetch, timed data (`--fastmem`) | n/a ¹ | **2.237** | 3.48× vs. mc default |
+| shared bus, 2–5 cycle latency (the default) | 7.784 | **6.208** | 1.254× |
+| shared bus, minimum latency (3 cycles per access) | 6.153 | **4.142** | 1.485× |
+| instant fetch, timed data | n/a ¹ | **2.237** | 3.48× vs. the old default |
 
-¹ `--fastmem` splits fetch timing from data timing, which the multicycle core
-has no way to express — it has one port and one access in flight.
+¹ This setting separates fetch timing from data timing, which the old core has
+no way to express — it has one port and one access in flight.
 
 **The trend is the whole result, not the individual numbers.** As memory gets
-faster the pipeline's advantage grows: 1.25× → 1.49× → and with fetch free,
-CPI 2.24 against the multicycle core's 7.78. On the straight-line arithmetic
-tests it reaches **CPI 1.01** — one instruction per cycle, which is what a
-correctly-forwarded 5-stage pipeline is supposed to do.
+faster, the pipeline's advantage grows: 1.25× → 1.49× → and with fetch free,
+CPI 2.24 against the old core's 7.78. On straight-line arithmetic it reaches
+**CPI 1.01** — one instruction per cycle, which is exactly what a correctly
+forwarded 5-stage pipeline is supposed to do.
 
-This is a direct measurement of the claim D1 was reversed on. v1's D1 said a
-pipeline's throughput is wasted stalling on slow fetch, and *at 2–5 cycles per
-fetch it is mostly right* — 1.25× is a thin return for +31% area. The v2
+This is a direct measurement of the claim D1 was reversed on. Version 1 said a
+pipeline's throughput is wasted waiting for slow fetch, and *at 2–5 cycles per
+fetch it is mostly right* — 1.25× is a thin return for 31% more area. The
 counter-argument was that the cache is what justifies the pipeline. The
-`--fastmem` row is that argument measured: hold everything else constant, make
-only instruction fetch free, and the same RTL goes from 1.25× to 3.5×. Neither
-half of the pair is worth much alone. **P2 without P3 would not have been worth
-doing, and now there is a number saying so rather than an assertion.**
+instant-fetch row is that argument measured: hold everything else constant, make
+only fetch free, and the same hardware goes from 1.25× to 3.5×. Neither half of
+the pair is worth much alone. **P2 without P3 would not have been worth doing,
+and now there is a number saying so rather than an assertion.**
 
 ### 9.3 Verification
 
-**ISS lockstep — 0 mismatches, three memory configurations.** 23 programs
-(17 directed + 6 random), 19,326 retired instructions per configuration:
-default 2–5 cycle shared bus, minimum-latency shared bus, and zero-wait-state
-fetch with timed data. The multicycle core passes the same 23 programs on the
-same stimulus, which is what licenses the CPI table above as a comparison
+**Reference comparison — 0 disagreements, three memory settings.** 23 programs,
+19,326 instructions per setting: the default 2–5 cycle bus, the minimum-latency
+bus, and instant fetch with timed data. The old core passes the same 23 programs
+on the same stimulus, which is what licenses the table above as a comparison
 rather than two unrelated numbers.
 
 **riscv-formal — 44/44 on both cores.**
 
-| | multicycle (`tinytrust`) | 5-stage (`tinytrust_p5`) |
+| | old core | pipelined core |
 |---|---|---|
 | checks | **44/44** | **44/44** |
-| `insn_*` depth | 25, with **six depth-60 overrides** for the shifts | 25, **no overrides** |
-| `reg` CHECK_CYCLE | 30 | 20 (see below) |
-| `reg` solve time (abc-bmc3) | 490 s | 36 s |
+| instruction check depth | 25, with **six raised to 60** for shifts | 25, **none raised** |
+| register check cycle | 30 | 20 (see below) |
+| register check solve time | 490 s | 36 s |
 
 Two things in that table are results, not configuration trivia:
 
-- **The six shift overrides are gone.** `insn_sll/srl/sra/slli/srli/srai`
-  needed depth 60 in the multicycle config purely so a 31-cycle iterative
-  shift could finish inside the bound. The barrel shifter (D5 reversed) makes
-  shifts prove at the same depth as everything else. Reversing D5 bought
-  throughput *and* reduced proof cost.
-- **The `reg` check is retuned to CHECK_CYCLE 20 for the pipeline, and that is
-  not a weaker bar.** The quantity to hold constant across two cores is
-  instructions covered, not cycles. Depth 30 leaves 20 operating cycles, which
-  at the multicycle core's CPI unrolls ~3 instructions but at the pipeline's
-  unrolls 10–20 — several times the state space, on a design that also has a
-  forwarding network. Measured: abc-bmc3 closes the multicycle check at 30 in
-  490 s and had not closed the pipelined one after 30+ minutes. At 20 the
-  pipeline still unrolls ~5–10 instructions — *more* than the multicycle core
-  gets at 30 — and closes in 36 s. The reasoning is recorded at the setting in
-  `checks.cfg` rather than left as a bare number.
+- **The six shift exceptions are gone.** Six shift checks needed depth 60 in the
+  old configuration purely so a 31-cycle iterative shift could finish inside the
+  bound. The barrel shifter makes shifts prove at the same depth as everything
+  else. Reversing D5 bought speed *and* reduced proof cost.
+- **The register check is retuned to cycle 20 for the pipeline, and that is not
+  a weaker bar.** The quantity to hold constant across two cores is
+  *instructions covered*, not cycles. Depth 30 leaves 20 working cycles, which
+  at the old core's speed covers about 3 instructions but at the pipeline's
+  covers 10 to 20 — several times the state space, on a design that also has a
+  forwarding network. Measured: the old core closes at 30 in 490 s, and the
+  pipelined one had not closed after more than 30 minutes. At 20 the pipeline
+  still covers roughly 5 to 10 instructions — *more* than the old core gets at
+  30 — and closes in 36 s. The reasoning is recorded at the setting itself
+  rather than left as a bare number.
 
-The multicycle suite was re-run from scratch for this milestone, not quoted
-from P1: `pmp.v` was refactored into `pmp` + `pmp_chk` so the CSR state could
-feed two concurrent check ports, and 44/44 on the unchanged core is the
-evidence that the refactor is behaviour-preserving.
+The old core's suite was re-run from scratch for this milestone, not quoted from
+P1: the protection unit was split so its register state could feed two check
+ports, and 44/44 on the unchanged core is the evidence that the split changed no
+behaviour.
 
 **Two bugs, and the second one is the point.**
 
-- **BUG-004** (SRA/SRAI shifted logically) — caught by ISS lockstep on the
-  first run of the new core. A Verilog typing rule, not a design error: inside
-  a ternary, one unsigned arm makes the whole expression unsigned, and that
-  propagates back into the operands, silently turning `>>>` into a logical
-  shift. The `$signed` cast was present and did nothing.
-- **BUG-005** (the WB forward was lost when a data access stalled MEM) —
-  caught by `reg_ch0`, and **co-simulation could not have caught it.** Not
-  through unlucky stimulus: through the timed memory model a fetch costs at
-  least three cycles, so consecutive instructions are never closer than three
-  pipeline stages apart, and the state — a consumer pinned in EX across a data
-  stall while its producer sits in WB — is *structurally unreachable* in that
-  environment. riscv-formal drives `ready` as a free variable and explores bus
-  schedules the model never produces.
+- **BUG-004** (arithmetic right shift became logical) — caught by the reference
+  comparison on the first run of the new core. A Verilog typing rule, not a
+  design error: inside a conditional, one unsigned side makes the whole
+  expression unsigned, and that propagates back into the operands, silently
+  turning an arithmetic shift into a logical one. The signed cast was present
+  and did nothing.
+- **BUG-005** (a forwarded value was lost when a data access stalled) — caught
+  by the register proof, and **simulation could not have caught it.** Not
+  through unlucky stimulus: with the timed memory model a fetch costs at least
+  three cycles, so consecutive instructions are never closer than three pipeline
+  stages apart, and the failing state — a consumer stuck in execute across a
+  data stall while its producer sits in write back — is *structurally
+  unreachable* in that environment. The proof tool treats memory readiness as a
+  free choice and explores schedules the model never produces.
 
-  The fix to the RTL was small (split retire from forwardability: `w_valid`
-  stays a one-cycle pulse, a new `w_fwd_live` holds until the next instruction
-  reaches WB). The fix to the *environment* mattered more. A directed
-  regression test alone would have been vacuous — it passes on the broken RTL
-  — so `tb_core.v` gained `+fastmem`, which makes the instruction port
-  zero-wait-state while leaving the data port timed: fast fetch so instructions
-  pack back to back, slow data so MEM still stalls. Verified in both
-  directions: on the pre-fix RTL the new `fwd_stall` test passes with the timed
-  model and fails at retire 9 with `+fastmem`. `dv/core_iss/run.ps1` now runs
-  three legs so the state space stays reachable.
+  The fix to the hardware was small: separate "just finished" from "still
+  available to forward". The fix to the *environment* mattered more. A directed
+  test alone would have been vacuous — it passes on the broken hardware — so the
+  testbench gained an instant-fetch mode, making instructions pack together
+  while data accesses still stall. Verified in both directions: on the pre-fix
+  hardware the new test passes with the timed model and fails at instruction 9
+  with instant fetch. The test runner now runs three configurations so the state
+  space stays reachable.
 
-  The lesson is about coverage of the *environment*, not the design. A
-  testbench whose timing is always the same shape hides state space, and no
-  amount of extra random instructions finds what the timing forbids. It is
-  also the timing an I$ produces — so left alone, this bug would have surfaced
-  at P3 as a regression in already-signed-off RTL.
+  The lesson is about coverage of the *environment*, not the design. A testbench
+  whose timing is always the same shape hides state space, and no amount of
+  extra random instructions finds what the timing forbids. It is also the timing
+  an instruction cache produces — so left alone, this bug would have appeared at
+  P3 as a regression in already-signed-off hardware.
 
 ### 9.4 What P2 changes for P3
 
-- **The two ports are already there.** `core_p5` exposes independent
-  instruction and data interfaces; the TB arbitrates them onto one memory
-  today. P3 replaces the arbiter with an I$ and a D$, one per port, and the
-  core does not change.
-- **The CPI target is set.** `--fastmem` is a cache-hit emulator: it says the
-  pipeline reaches CPI 2.24 overall and 1.01 on straight-line code when fetch
-  is free. That is the number an I$ has to approach to justify itself, and it
-  was measured before a line of cache RTL was written.
-- **`+fastmem` is not throwaway.** It stays as the third regression leg, and
-  it is the closest thing available to P3's timing until the caches exist.
-- **Serialized SYSTEM is a known cost to revisit.** It is cheap now because
-  CSR instructions are rare. If the coherence work at P4/P5 makes CSR or fence
-  traffic common, the serialization becomes the thing to attack — and the
-  bypass network it was traded against is written up here so the trade is
-  legible rather than rediscovered.
+- **The two ports are already there.** The pipelined core exposes independent
+  instruction and data interfaces, which the testbench currently arbitrates onto
+  one memory. P3 replaces the arbiter with two caches and the core does not
+  change.
+- **The speed target is set.** Instant fetch is a cache-hit emulator: it says
+  the pipeline reaches CPI 2.24 overall and 1.01 on straight-line code when
+  fetch is free. That is the number an instruction cache has to approach to
+  justify itself, and it was measured before a line of cache code was written.
+- **Instant-fetch mode is not throwaway.** It stays as the third regression
+  configuration, and it is the closest thing available to cache timing until the
+  caches exist.
+- **Serialising system instructions is a known cost to revisit.** It is cheap
+  now because those instructions are rare. If the coherence work makes them
+  common, the serialisation becomes the thing to attack — and the bypass network
+  it was traded against is written up here so the trade is visible rather than
+  rediscovered.
 
 ---
 
-## 10. Milestone results: P3 — caches
+## 10. Results: P3 — caches
 
-*Completed 2026-08-31. Exit criteria from §7: "I$/D$ with SRAM macros;
-hit/miss verified; still 44/44 formal."*
+*Completed 2026-09-03. Required: instruction and data caches on real memory
+blocks; hits and misses verified; still 44/44.*
 
 ### 10.1 What was built
 
-`rtl/cache/cache.v` — one parameterised module serving both caches. 4 KiB,
-64 B line, direct-mapped (D21); write-back, write-allocate for the D$ (D17);
-data array in one `RM_IHPSG13_1P_512x64` with tags in flops (D19). The core
-side is exactly the port shape `core_p5` already drove on imem/dmem and the
-memory side is exactly the bus the SoC already spoke, so the caches dropped in
+`rtl/cache/cache.v` — one adjustable module serving both caches. 4 KB, 64-byte
+lines, direct-mapped (D21); write-back and write-allocate for the data cache
+(D17); data in one memory block with tags in flip-flops (D19). The processor
+side is exactly the interface the pipelined core already drove, and the memory
+side is exactly the bus the system already spoke, so the caches dropped in
 without either end changing.
 
-Three things are worth pulling out of the RTL:
+Three things worth pulling out:
 
-- **Write hits cost zero wait states.** The macro's per-bit write mask means a
-  partial (SB/SH) write needs no read-modify-write: the byte enables expand
-  onto `A_BM` and the write retires in the cycle it arrives. This is the
-  concrete reason a bit-masked macro was worth having.
-- **A miss re-runs rather than being served from the fill path.** After the
-  refill the request simply tries again and hits, which costs one lookup cycle
-  per miss and removes an entire class of bypass logic. The core holds address
-  and valid stable until ready, so it is free to retry — verifiability first.
-- **Uncacheable region, and it is a correctness requirement rather than an
-  optimisation.** TOHOST is a device register at 0x0001_0000; a write-back
-  cache would swallow the store that ends every test. Addresses at or above
-  `CACHEABLE_LIMIT` bypass entirely, which is also what keeps the core's
-  precise access-fault behaviour intact.
+- **Write hits cost no waiting.** The memory block's per-bit write mask means a
+  partial write needs no read-modify-write cycle: the byte enables expand onto
+  the mask and the write completes in the cycle it arrives. This is the concrete
+  reason a bit-masked block was worth having.
+- **A miss retries rather than being served from the fill path.** After the line
+  is fetched, the request simply tries again and hits. That costs one lookup
+  cycle per miss and removes an entire class of bypass logic. The processor
+  holds its request steady until accepted, so it is free to retry —
+  verifiability first.
+- **The uncached region is a correctness requirement, not an optimisation.** The
+  test-completion register lives at address `0x0001_0000`, and a write-back
+  cache would swallow the store that ends every test. Addresses at or above the
+  cacheable limit bypass entirely, which is also what keeps the processor's
+  precise fault behaviour intact.
 
-**Not handled, deliberately:** there is no I$/D$ coherence and the core traps
-FENCE.I, so self-modifying code is unsupported. Every test keeps code below
-0x7000 and data at 0x8000 and up, so no store can alias a cached instruction
-line. Coherence arrives with the snoop channel at P4.
+**Deliberately not handled:** there is no coherence between the instruction and
+data caches, and the processor traps the cache-flush instruction, so
+self-modifying code is unsupported. Every test keeps code below `0x7000` and
+data at `0x8000` and above, so no store can collide with a cached instruction
+line. Coherence arrives with the snoop channel.
 
 ### 10.2 The first version made the machine slower
 
-Worth recording because the fix is the whole argument for the geometry choice.
-The cache as first built gave **CPI 6.91 against 4.51 with no cache at all**.
-A read hit costs one wait state — the tag compare is combinational but the
-SRAM read is not — so every fetch took two cycles where the uncached path took
+Worth recording, because the fix is the whole argument for the geometry choice.
+The cache as first built gave **CPI 6.91 against 4.51 with no cache at all**. A
+read hit cost one wait state — the tag comparison is immediate but the memory
+read is not — so every fetch took two cycles where the uncached path took
 roughly the same, and the misses were pure loss.
 
-The fix is what D21 chose a 64-bit-wide macro for: **one SRAM read returns two
-instructions.** Keeping the sibling word in a one-entry fetch buffer makes a
-sequential fetch stream alternate SRAM-read / buffer-hit, so the fetch path
-averages one cycle per instruction instead of two. Invalidation is a single
-conservative clear when a line lands, because a read-only cache has nothing
-else that can make a buffered word stale.
+The fix is what D21 chose a 64-bit-wide block for: **one memory read returns two
+instructions.** Keeping the second one in a single-entry buffer makes a
+sequential fetch stream alternate between memory reads and buffer hits, so
+fetching averages one cycle per instruction instead of two. Invalidating the
+buffer is a single conservative clear whenever a line arrives, because a
+read-only cache has nothing else that can make a buffered word stale.
 
-### 10.3 CPI — and a benchmark that had to be written first
+### 10.3 Speed — and a benchmark that had to be written first
 
-**The existing test suite structurally could not measure this milestone.**
-Every directed and random program in `dv/core_iss` is straight-line code
-executed once. That is the worst case for a cache: a 64 B line pulls in 16
-instructions that are each used exactly once, so an I$ can only ever match a
-plain fetch stream, never beat it. Measuring P3 on those programs measures
-refill bandwidth and nothing else. Nothing in the suite had a loop.
+**The existing test suite structurally could not measure this milestone.** Every
+directed and random program runs in a straight line, once. That is the worst
+case for a cache: a 64-byte line pulls in 16 instructions used exactly once, so
+an instruction cache can only match a plain fetch, never beat it. Measuring on
+those programs measures refill bandwidth and nothing else. Nothing in the suite
+had a loop.
 
 So `loop_bench` was added: a nested loop whose 5-instruction hot body sits in a
-single cache line and whose 512 B working set fits the D$ several times over.
-It is deliberately generous — an upper bound on what these caches buy, not a
-typical program — and it is the only workload in the suite with temporal
-locality.
+single cache line and whose 512-byte working set fits the data cache several
+times over. It is deliberately generous — an upper bound on what these caches
+buy, not a typical program — and it is the only workload in the suite that
+reuses anything.
 
-| configuration (`loop_bench`, 5,164 instructions) | CPI | vs. multicycle |
+| configuration (`loop_bench`, 5,164 instructions) | CPI | vs. the old core |
 |---|---|---|
-| multicycle core, no cache | 7.62 | — |
-| 5-stage core, no cache | 6.29 | 1.21× |
-| **5-stage core + I$ and D$** | **2.55** | **2.99×** |
+| old core, no cache | 7.62 | — |
+| pipelined core, no cache | 6.29 | 1.21× |
+| **pipelined core with both caches** | **2.55** | **2.99×** |
 
 That completes the argument D1 was reversed on. The pipeline alone buys 1.21×;
 the pipeline with caches buys 2.99×. "The cache is what justifies the pipeline"
-is now a measured claim over three configurations rather than a rationale.
+is now a measured claim across three configurations rather than a rationale.
 
 ### 10.4 Area
 
-Standard-cell area only — the data array is the macro measured at
-`pd/results/sram_smoke/METRICS.md`, 150,102 µm² = 20.68 kGE each.
+Standard-cell area only — the data array is the memory block measured earlier at
+150,102 µm² = 20.68 kGE each.
 
-| block | area µm² | kGE | flops | + macro | total |
+| block | area µm² | kGE | flip-flops | + block | total |
 |---|---|---|---|---|---|
-| `cache` (I$, WRITABLE=0) | 120,619 | 16.62 | 1,529 | 20.68 | **37.30 kGE** |
-| `cache` (D$, WRITABLE=1) | 124,168 | 17.11 | 1,530 | 20.68 | **37.79 kGE** |
+| instruction cache | 120,619 | 16.62 | 1,529 | 20.68 | **37.30 kGE** |
+| data cache | 124,168 | 17.11 | 1,530 | 20.68 | **37.79 kGE** |
 
-D21 estimated ~9.1 kGE for the I$ tag flops and that part holds — 1,529 flops
-against the ~1,344 predicted for tags, with the rest being the fetch buffer and
-the refill/writeback datapath (`wb_data`, `line_base`, `fill_lo`). What D21 did
-*not* estimate is that the control and datapath around the tags roughly doubles
-the standard-cell area: the realised cache logic is 16.6 kGE, not 9.1. The
-prediction was for the part it named, and the part it did not name was the
-larger half.
+D21 estimated about 9.1 kGE for the tag flip-flops and that part holds — 1,529
+flip-flops against the roughly 1,344 predicted for tags, with the rest being the
+fetch buffer and the refill and write-back datapath. What D21 did *not* estimate
+is that the control and datapath around the tags roughly doubles the
+standard-cell area: the realised cache logic is 16.6 kGE, not 9.1. The
+prediction was right about the part it named, and the part it did not name was
+the larger half.
 
-One core with both caches is now 24.89 + 37.30 + 37.79 = **99.98 kGE**, of
-which 41% is SRAM macro. Two of those is ~200 kGE ≈ 1.45 mm² — still
-comfortable on a 2×2 mm die, but P4 should size the coherence work knowing
+One core with both caches is now 24.89 + 37.30 + 37.79 = **99.98 kGE**, of which
+41% is memory block. Two of those is about 200 kGE, roughly 1.45 mm² — still
+comfortable on a 2 × 2 mm chip, but the coherence work should be sized knowing
 that caches, not cores, dominate.
 
 ### 10.5 Verification
 
-**Block level — `dv/cache`, 6/6 across three seeds.** The testbench checks two
-separate claims, because a data-only check proves only the first: a cache that
-missed on every access would pass it. So memory-side beats are counted and
-hits are asserted to generate *none*, a cold miss exactly 16, and a dirty
-eviction exactly 32. Directed phase covers cold miss, read and write hits,
-partial writes through the macro's bit mask, dirty eviction, uncacheable
-pass-through and a bus fault during refill. Then random traffic over a range
-that forces constant index conflicts, then a read-back sweep of every address
-ever written — the sweep is what actually proves the writeback path, since an
-evicted dirty line is only re-readable if its data really reached memory.
+**Block level — 6 of 6 across three random seeds.** The testbench checks two
+separate claims, because checking the data alone only proves the first: a cache
+that missed on every single access would still return correct data. So
+memory-side transfers are counted too, and a hit is required to generate
+*none*, a first-time miss exactly 16, and throwing out a modified line exactly
+32. The directed phase covers a cold miss, read and write hits, partial writes
+through the block's write mask, eviction of modified data, uncached
+pass-through, and a memory error during a fetch. Then random traffic over a
+range chosen to force constant collisions, then a read-back sweep of every
+address ever written. That sweep is what actually proves the write-back path,
+since an evicted modified line is only readable again if its data really
+reached memory.
 
-**System level — all four regression legs, 22 programs, 18,973 instructions
-each, 0 mismatches.** The cached configuration retires an identical
-instruction stream to the uncached one, which is the property that matters:
-the caches are invisible to the architecture.
+**System level — all four regression configurations, 22 programs, 18,973
+instructions, 0 disagreements.** The cached configuration executes an identical
+instruction stream to the uncached one, which is the property that matters: the
+caches are invisible to the software.
 
-**Core riscv-formal — the 5-stage core re-observed at 44/44.** Re-run against
-the committed RTL after all P3 work: `dv/formal/riscv-formal/cores/tinytrust_p5`
-reports 44/44, with 44 on-disk PASS status files. That is the core P3 actually
-integrates with, and it is a fresh observation rather than an argument.
+**Processor proofs — the pipelined core re-measured at 44/44.** Re-run against
+the committed design after all cache work, with 44 passing status files on
+disk. That is the core the caches actually connect to, and it is a fresh
+observation rather than an argument.
 
-The multicycle suite was re-observed too, and is now a measurement rather than
-an argument: **44/44 on 2026-09-03**, a full regenerate-and-run of
-`cores/tinytrust` (`reg_ch0` slowest at 410 s, consistent with the profile that
-made it the one check needing the `abc bmc3` retune). It had previously stood
-at 44/44 at commit `a2b2653` and been carried forward by reasoning — `core.v`
-untouched, the cache outside the proof boundary. The reasoning was sound; it is
-simply no longer what the claim rests on.
+The old core's suite was re-measured too, and is now a measurement rather than
+an argument: **44/44 on 2026-09-03**, a full regenerate-and-run, with the
+register check slowest at 410 s — consistent with the profile that made it the
+one check needing a different engine. It had previously stood at 44/44 and been
+carried forward by reasoning: the core was untouched and the cache sits outside
+the proof boundary. The reasoning was sound; it is simply no longer what the
+claim rests on.
 
-**CACHE-FV-01 — the I$ is closed; the D$ is open for a stated reason.** The
-transparency property (a read returns the last value written to that address)
-is `dv/formal/cache/cache_fv.sv`, using a one-address abstraction with an
-`anyconst` address so a proof covers every address rather than a chosen one.
+**The cache property — instruction cache closed, data cache open for a stated
+reason.** The property is that the cache is invisible: a read returns the last
+value written to that address. It is proven for a single arbitrary address,
+chosen by the solver rather than by the author, so a proof covers every address.
 
-**I$ — PASS at depth 26** (2026-09-03, `abc bmc3` on a `memory_map`'d netlist,
-14m36s, frames 0-25 all clean). With the non-vacuity witness below, that closes
-CACHE-FV-01 for the instruction cache.
+**Instruction cache — PASSES out to 26 cycles** (2026-09-03, 14m36s, every
+cycle from 0 to 25 clean). Together with the non-emptiness check below, that
+closes the property for the instruction cache.
 
-**Non-vacuity, and why it was not optional.** The harness always ended with
-`cover (core_read)`, whose own comment reads "the proof is worthless if the
-environment cannot even complete a read of the tracked word" — but both `.sby`
-files were `mode bmc`, and sby evaluates cover statements only in `mode cover`.
-The guard had never executed. Against assumptions as strong as this harness
-carries (request stability, two-cycle bus fairness, `chk_word` cacheable), a
-vacuous pass was a live possibility, not a theoretical one. `icache_cover.sby`
-and `dcache_cover.sby` now run it: both reach `core_read` at step 9 in about a
-second. `abc` has no cover mode, so the cover legs use `smtbmc`.
+**Why the non-emptiness check was not optional.** The setup always ended with a
+`cover` statement whose own comment reads "the proof is worthless if the
+environment cannot even complete a read of the tracked word" — but both
+configurations run in one tool mode, and the tool evaluates cover statements
+only in a different one. The check had never executed. Against assumptions as
+strong as this setup carries — the processor holds requests steady, memory
+answers within two cycles, the tracked address is cacheable — a proof that
+passes by never reaching the interesting case was a live possibility, not a
+theoretical one. Both caches now confirm a read really happens, at step 9, in
+about a second.
 
-**D$ — does not close, for two independent measured reasons (2026-09-03).**
+**Data cache — does not close, for two independent measured reasons.**
 
 | | |
 |---|---|
-| the cost | cumulative solve time at the 16 B / 4-line geometry: step 15 = 60 s, step 16 = 235 s, step 17 = 949 s, i.e. **~4x per step**. The I$ grew ~1.4x over the same range and closed. The difference is the write path — a free 4-bit `c_wstrb` every cycle, dirty tracking, and the writeback state machine. |
-| the bound | the sequence the D$ property actually turns on — a writeback of the tracked word, then a core read of it — is **first reachable at step 28**. The configured bound was 26. |
+| the cost | cumulative solve time at the reduced size: step 15 = 60 s, step 16 = 235 s, step 17 = 949 s — about **4x per step**. The instruction cache grew at about 1.4x over the same range and closed. The difference is the write path: a freely chosen 4-bit write mask every cycle, tracking which lines are modified, and the write-back sequencing. |
+| the bound | the sequence the property actually turns on — writing back the tracked word, then reading it again — is **first reachable at step 28**. The configured bound was 26. |
 
-The second reason is the important one. A D$ PASS at 26 would have been sound
-and close to worthless: it would have covered refills and write hits and never
-an eviction, which is the behaviour the property exists to check. Nothing in an
-assertion result reveals this — it took stating the sequence as a cover
-(`wb_seen && core_read`, D$ only) and measuring where it first becomes
-reachable. `dcache.sby` now carries depth 28, the honest minimum, and is out of
-the default suite rather than left looking green at a bound that asks the wrong
-question.
+The second reason is the important one. A pass at 26 would have been perfectly
+sound and close to worthless: it would have covered refills and write hits and
+never once an eviction, which is the behaviour the property exists to check.
+Nothing in a passing result reveals this. It took stating the sequence as a
+`cover` and measuring where it first becomes reachable. The configuration now
+carries 28, the honest minimum, and is excluded from the default suite rather
+than left looking green at a bound that asks the wrong question.
 
-A shorter line was tried as a way in and **rejected as invalid**: at
-`LINE_BYTES = 8` a refill is 2 beats and the whole sequence fits by step 14,
-but that is not a legal configuration of `cache.v`. `W64_BITS` becomes
-`clog2(1) = 0`, so `a_w64` degenerates to `wire [-1:0]` and
-`beat[BEAT_BITS-1:1]` becomes the reversed part-select `beat[0:1]`. Yosys
-accepts both silently and `check -assert` passes, so it elaborates and yields a
-counterexample at step 7 that says nothing about the shipped design. 16 B is
-the geometry floor, and an elaboration check is not a validity check.
+A shorter cache line was tried as a way in and **rejected as invalid**. At 8
+bytes a refill is 2 transfers and the whole sequence fits by step 14 — but that
+is not a legal setting for this design. One derived width becomes zero, so an
+internal signal collapses to an impossible width and a bit-select comes out
+reversed. Yosys accepts both silently and the structural check passes, so it
+builds and then produces a counterexample at step 7 that says nothing about the
+real design. 16 bytes is the floor, and **passing an elaboration check is not
+the same as being a valid configuration**.
 
-**What would close it is not a longer run.** BMC replays the whole
-write-evict-writeback-refill sequence from reset at every step, which is what
-costs 4x a step. The two routes that avoid it are k-induction (`mode prove`)
-with invariants over the tag and dirty state, or decomposing the property so
-writeback correctness is proven from an unconstrained start. Both need the
-machinery the P4 coherence proofs need over the same state, which is where the
-work belongs.
+**What would close it is not a longer run.** A bounded proof replays the whole
+write-evict-write-back sequence from reset at every step, which is what costs 4x
+a step. The two ways past it are induction with hand-written invariants, or
+splitting the property so write-back correctness is proven from an arbitrary
+starting state rather than from reset. Both need the machinery the coherence
+proofs need over the same state, which is where that work belongs.
 
 Earlier attempts, kept because they are what led here:
 
-| geometry | depth | reset cycles | reached | outcome |
+| size | depth | reset cycles | reached | outcome |
 |---|---|---|---|---|
-| shipped (64 B line, 64 lines) | 55 | 15 | step 40 | no verdict after **6h21m**; >1h on a single solver query |
-| reduced (16 B line, 4 lines) | 40 | 15 | step 38 | clean, stopped at 39 min |
-| reduced (16 B line, 4 lines) | 32 | 3 | step 26 | clean, stopped at 28 min |
-| reduced, `abc bmc3` + `memory_map` | 40 | 3 | step 33 | clean, stopped at 97 min |
+| full (64-byte line, 64 lines) | 55 | 15 | step 40 | no result after **6h21m**; over an hour on a single query |
+| reduced (16-byte line, 4 lines) | 40 | 15 | step 38 | clean, stopped at 39 min |
+| reduced (16-byte line, 4 lines) | 32 | 3 | step 26 | clean, stopped at 28 min |
+| reduced, different engine | 40 | 3 | step 33 | clean, stopped at 97 min |
 
-The last row is what made the I$ closure possible. Switching from
-smtbmc/boolector to `abc bmc3` on a `memory_map`'d netlist — the same trick
-`runchecks.py` already applies to the core's `reg` check — is dramatically
-faster at low depth (step 11 in 0.4 s against minutes per step), because the
-SRAM array stops being an SMT array and becomes plain flops.
+The last row is what made the instruction cache result possible. Switching to a
+SAT-based engine on a design where the memory array has been expanded into plain
+flip-flops — the same trick the processor's register check already uses — is
+dramatically faster at low depth (step 11 in 0.4 s against minutes per step),
+because the memory array stops being an abstract array and becomes ordinary
+logic.
 
-Three lessons worth keeping. The proof cost is dominated by the SRAM array
-being part of the model, which is what the P2 `reg_ch0` retune already hinted
-at: bounded proofs over designs with large arrays scale badly, and the fix is
-to shrink what is unrolled rather than to wait longer. A third of the first
-reduced-geometry run's depth was spent sitting in reset — 15 cycles of a 40
-cycle bound — which is pure waste and was cut to 3. And a bound is not
-justified by arithmetic on paper: state the sequence you believe the bound
-reaches as a cover, and measure it. Here the paper estimate was 21 and the
-measured answer was 28, which is the difference between a proof and a proof of
-the wrong thing.
+Three lessons worth keeping:
 
-### 10.6 P3 status against its exit criteria
+1. **Proof cost is dominated by the memory array being part of the model.** This
+   is what the earlier register-check retuning already hinted at: bounded proofs
+   over designs with large arrays scale badly, and the fix is to shrink what is
+   being unrolled rather than to wait longer.
+2. **Time spent in reset is pure waste.** A third of the first reduced run's
+   depth was spent sitting in reset — 15 cycles of a 40-cycle bound — and was
+   cut to 3.
+3. **A bound is not justified by arithmetic on paper.** State the sequence you
+   believe the bound reaches as a `cover`, and measure it. Here the paper
+   estimate was 21 and the measured answer was 28, which is the difference
+   between a proof and a proof of the wrong thing.
+
+### 10.6 P3 against its exit criteria
 
 | criterion | status |
 |---|---|
-| I$/D$ with SRAM macros | **met** — 4 KiB each, `RM_IHPSG13_1P_512x64` data arrays |
-| hit/miss verified | **met** — block-level beat counting plus the system legs |
-| still 44/44 formal | **met, both cores, both measured** — 5-stage 44/44 re-observed after all P3 work; multicycle 44/44 re-run 2026-09-03 |
-| *(added by D22)* cache proven separately | **met for the I$** — CACHE-FV-01 PASS at depth 26 with a non-vacuity witness. **Open for the D$**, with the reason now measured rather than "no verdict": ~4x per step, and a bound of 28 needed to reach an eviction |
+| Instruction and data caches on real memory blocks | **met** — 4 KB each, real `RM_IHPSG13_1P_512x64` blocks |
+| Hits and misses verified | **met** — block-level transfer counting plus the system-level runs |
+| Still 44/44 | **met, both cores, both measured** — pipelined core re-measured after all cache work; old core re-run 2026-09-03 |
+| *(added by D22)* the cache proven separately | **met for the instruction cache** — passes at 26 cycles with a non-emptiness check. **Open for the data cache**, with the reason now measured rather than "no result": about 4x per step, and a bound of 28 needed to reach an eviction |
 
 P3 is closed on three of four criteria and knowingly open on the fourth. The
 change since 2026-08-31 is that the open item stopped being "the proof did not
-return" and became a specific, measured statement: BMC from reset cannot reach
-the D$ eviction sequence at any affordable cost, and the route through it is
-k-induction or a decomposed property, which is P4 machinery. That is a
-milestone exit, not a milestone stall — but it is an exit with one criterion
-deliberately unmet, and P4 inherits it.
+return" and became a specific, measured statement: a bounded proof from reset
+cannot reach the data cache's eviction sequence at any affordable cost, and the
+way through is induction or a split property, which is coherence machinery. That
+is a milestone exit, not a milestone stall — but it is an exit with one
+criterion deliberately unmet, and the coherence work inherits it.
 
 Two things were found while closing this out that were not part of the plan,
-both recorded above: the non-vacuity guard in the harness had never run because
-of a `mode bmc` / `mode cover` mismatch, and the D$ bound was below the depth at
-which the behaviour it proves can occur. Neither would have shown up in a
-passing result.
+both recorded above: the non-emptiness check in the setup had never run because
+of a tool-mode mismatch, and the data cache bound was below the depth at which
+the behaviour it proves can happen. Neither would have shown up in a passing
+result.
