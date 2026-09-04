@@ -24,7 +24,7 @@ estimate unless it says so.
 | **riscv-formal** | **44/44** on both cores, independently measured |
 | **ISS lockstep** | 0 mismatches across 4 memory configurations |
 | **Caches** | 4 KiB I$ + 4 KiB D$ on real `RM_IHPSG13_1P_512x64` SRAM macros |
-| **Now** | P4 — two cores, shared bus, MESI coherence |
+| **Now** | S1 — smallest complete chip, on the way to first tape-out |
 
 <table>
 <tr>
@@ -53,7 +53,7 @@ flowchart TB
         P0 --> D0
     end
 
-    subgraph C1["Core 1 — P4"]
+    subgraph C1["Core 1 — S2"]
         P1["RV32I 5-stage pipeline"]
         I1["I$ 4 KiB"]
         D1["D$ 4 KiB"]
@@ -140,8 +140,8 @@ flowchart LR
 **Open, and stated as open:** the D$ transparency proof does not close. BMC
 needs depth 28 to reach an eviction and costs ~4× per step, which puts it out
 of reach by orders of magnitude. The route through is k-induction or a
-decomposed property — P4 machinery, so P4 inherits it. Details in
-[RETARGET.md §10.5](docs/RETARGET.md).
+decomposed property — the same machinery S2's coherence proofs need, so it is
+carried there. Details in [RETARGET.md §10.5](docs/RETARGET.md).
 
 Two defects in the *verification setup itself* were found closing that out,
 neither of which would have shown up in a passing result: a non-vacuity guard
@@ -185,16 +185,37 @@ declaration — off by 1e12, which aborts the resizer.
 
 ## Roadmap
 
-| | Milestone | Status |
+Incremental silicon: each version is a whole chip, and each retires risk for
+the next. See [TAPEOUT_PLAN.md](docs/TAPEOUT_PLAN.md).
+
+**Foundations — done**
+
+| | | |
 |---|---|---|
 | **P0** | Backend bring-up, first GDS | ✅ 2026-08-28 |
 | **P1** | Recalibrate area against sg13g2 | ✅ 2026-08-28 |
 | **P2** | 5-stage pipeline | ✅ 2026-08-30 |
 | **P3** | Caches on SRAM macros | ✅ 2026-09-03 — one criterion knowingly open |
-| **P4** | **2 cores, shared bus, MESI** | ⬅ **in progress** |
-| **P5** | MOESI + the MESI/MOESI measurement | |
-| **P6** | Pad ring, full-chip P&R, timing closure, DRC + LVS | |
-| **P7** | IHP Open Silicon MPW submission | |
+
+**S1 — smallest complete chip** ⬅ *current*
+
+| | | |
+|---|---|---|
+| **S1-A** | SoC integration: bus, UART, GPIO, timer, boot ROM, memory, top | ⬅ next |
+| **S1-B** | Full-chip simulation + firmware bring-up | |
+| **S1-C** | Pad ring, full-chip P&R, chip-level timing closure | |
+| **S1-D** | Signoff: DRC, **LVS**, gate-level simulation | |
+| **S1-E** | MPW submission | |
+
+**Later silicon**
+
+| | | |
+|---|---|---|
+| **S2** | 2 cores, shared bus, MESI → MOESI + the comparison | coherence design open — [COHERENCE.md](docs/COHERENCE.md) |
+| **S3** | QSPI XIP, ASCON secure boot from external flash | |
+
+The MESI/MOESI comparison is a measurement over RTL, so it continues in
+parallel with S1 and does not wait for silicon.
 
 ---
 
@@ -206,6 +227,8 @@ decisions that were reversed and what that cost.
 | | |
 |---|---|
 | [RETARGET.md](docs/RETARGET.md) | **Start here.** The v2 plan, every decision, and the measured milestone results |
+| [TAPEOUT_PLAN.md](docs/TAPEOUT_PLAN.md) | The incremental silicon plan: S1, S2, S3 and why signoff moved ahead of coherence |
+| [COHERENCE.md](docs/COHERENCE.md) | S2 coherence design — MESI/MOESI protocol, bus, and the invariants to prove |
 | [ARCHITECTURE.md](docs/ARCHITECTURE.md) | v1 architecture spec — superseded in parts, kept legible on purpose |
 | [VPLAN.md](docs/VPLAN.md) | Verification plan: feature → testpoint → method |
 | [BUGLOG.md](docs/BUGLOG.md) | Every bug found, how it was found, and what it cost |
@@ -217,7 +240,7 @@ decisions that were reversed and what that cost.
 rtl/core     core.v (multicycle), core_p5.v (5-stage), regfile, pmp
 rtl/cache    cache.v — parameterizable I$/D$, SRAM-macro backed
 rtl/periph   ascon_p permutation accelerator
-rtl/soc      (P4: bus, coherence controller, top level)
+rtl/soc      (S1-A: bus, peripherals, top level; S2 adds the coherence controller)
 dv/core_iss  spec-written ISS + lockstep co-simulation
 dv/formal    riscv-formal harness + cache transparency proofs
 dv/cache     cache block testbenches

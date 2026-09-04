@@ -80,6 +80,9 @@ directed + 12/12 random, 45,612 instructions, 0 mismatches.
 | D24 | **Coherence state replaces `{valid, dirty}` in place** as a 2-bit `state_q` (P4, 2026-09-03) | A separate coherence-state array alongside valid/dirty | The D$ already stores 2 bits per line and MESI has 4 states, so the re-encoding is a rename rather than growth — the only thing MESI adds is splitting `valid && !dirty` into E and S. MOESI is five states and does need a third bit — +64 flops per D$, ~0.43 kGE, which P5's area line must carry rather than inherit MESI's "free". Coherence is free in the tag array here, which inverts the usual intuition. A separate array would permit `valid=0, state=M`, a contradiction that would then have to be proven absent. |
 | D25 | **The I$ stays outside the coherence domain** (P4, 2026-09-03) | I$ snoops invalidations too | The core traps `FENCE.I` and self-modifying code is already unsupported (§10.1), so instruction memory is immutable by construction and an incoherent I$ cannot be observed. Halves the snoop logic and the state space to prove. It is a real restriction — a program writing code for the other core is outside the supported model — and is recorded rather than hidden. |
 | D26 | **Single outstanding bus transaction, round-robin arbiter** (P4, 2026-09-03) | Split-transaction bus with MSHRs | It is the shape the caches already speak — the existing memory port is single-outstanding valid/ready. A split-transaction bus is the more interesting problem but multiplies the state space exactly where coherence bugs live (concurrent transactions to one line), and §8 already carries P4/P5 as the loosest estimate in the plan. Both protocols see the same bus, so the MESI/MOESI comparison stays controlled. |
+| D27 | **Physical signoff moves ahead of coherence** (2026-09-03) | Keep the §7 order: coherence, then signoff | The P0 argument one level up — the chip-level flow (pads, LVS, signoff DRC, GL sim) is the largest remaining unknown, and §7 meets it last on the most complex design. The D16 deliverable is a simulation measurement, so nothing about the headline result depends on what is on the first die. See [TAPEOUT_PLAN.md](TAPEOUT_PLAN.md). |
+| D28 | **S1 boots and runs from on-chip SRAM** (2026-09-03) | QSPI XIP from external flash, as ARCHITECTURE §4 assumes | Removes an unwritten controller, an external part and its pad timing from first silicon. The memory map keeps its regions so firmware carries forward; XIP arrives at S3 with the secure-boot story it exists to serve. |
+| D29 | **S1 keeps the caches** (2026-09-03) | Core-only first chip | The SRAM smoke test proved one macro and explicitly *not* multi-macro placement, channel routing or PDN across an array. S1 retires that gap before a dual-core chip depends on it, and the caches are already verified — integration cost, not design cost. |
 
 ---
 
@@ -312,6 +315,20 @@ macro-only smoke test before committing the cache architecture.
 **P0 is deliberately first.** The flow is the largest unknown and the thing
 that produces the render; growing the RTL before proving the backend risks
 discovering at P6 that the design cannot be hardened.
+
+**The order below P3 is superseded by [TAPEOUT_PLAN.md](TAPEOUT_PLAN.md)
+(2026-09-03, D27).** The plan is now incremental silicon: a smallest-complete
+single-core chip (S1) is hardened, signed off and submitted *before* the
+dual-core coherent design (S2). The reason is the sentence immediately above,
+applied one level up — P0 proved that a *core* hardens, not that a *chip*
+does, and the current table meets pads, LVS, signoff DRC and gate-level
+simulation last, all at once, on the most complex version of the design.
+
+P4 and P5 as written below are not cancelled; they become S2, and the
+MESI/MOESI comparison D16 calls the deliverable continues in RTL in parallel,
+because it is a simulation measurement and never needed silicon. The table is
+left as written rather than edited, for the same reason §2 lists reversed v1
+decisions instead of quietly rewriting them.
 
 ---
 
