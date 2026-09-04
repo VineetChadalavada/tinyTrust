@@ -1,40 +1,69 @@
-# TinyTrust P4/P5 — Coherence Design
+# Two-Core Memory Design (S2)
 
-*Status: DESIGN, opened 2026-09-03. Implements milestone P4 of
-[RETARGET.md](RETARGET.md) §7; P5 extends the same RTL to MOESI.*
-*Parent decisions: D14 (2 cores), D15 (snooping), D16 (one parameterizable
-controller), D21 (cache geometry), D22 (formal boundary).*
-
----
-
-## 1. What this milestone is for
-
-D16 fixed the deliverable: **not a coherence protocol, but a comparison of
-two.** `COHERENCE = MESI | MOESI` selects between them on identical RTL
-driven by identical stimulus, so writeback traffic and shared-line latency
-can be measured rather than argued. P4 builds the machinery and closes MESI;
-P5 turns on the O state and produces the comparison.
-
-That framing decides the architecture everywhere it is ambiguous: anything
-that would make the two protocols structurally different RTL is the wrong
-answer, because it destroys the controlled comparison.
+*Status: design started 2026-09-03. Builds the two-core part of the plan in
+[TAPEOUT_PLAN.md](TAPEOUT_PLAN.md). Earlier decisions this builds on: D14 (two
+cores), D15 (snooping), D16 (one design with a switch), D21 (cache size and
+shape), D22 (where the proofs stop).*
 
 ---
 
-## 2. What P3 already gives us
+## 1. The problem this solves
 
-Two properties of the existing `rtl/cache/cache.v` turned out to matter more
-than expected, and both **remove** planned P4 work.
+When two processor cores each have their own cache, they can each hold a copy
+of the same piece of memory. If one core changes its copy, the other is now
+holding stale data and does not know it. Left alone, the two cores disagree
+about what memory contains, and programs break in ways that are very hard to
+debug.
 
-### 2.1 The tags are flops, so snooping needs no duplicate tag array
+Keeping the copies in agreement is called **cache coherence**. The usual
+solution on a small system is **snooping**: all the caches share one bus, and
+each cache watches — "snoops" — every request the others make. If another core
+asks for a line you are holding, you react: hand it over, mark yours as shared,
+or throw yours away.
 
-D21 budgeted for this explicitly — it sized the tag flops "before P4
-duplicates the D$ tags for snooping." That duplication is not needed here.
+**MESI** and **MOESI** are two standard sets of rules for doing this. The names
+are the states a cache line can be in:
 
-Tag duplication exists to solve a *port conflict*: when tags live in a
-single-ported SRAM, a snoop lookup and a core lookup in the same cycle
-contend, and the standard fix is a second physical copy. In this design only
-the **data** array is a macro. D19 put the tag array in flops:
+| | |
+|---|---|
+| **M** — Modified | I have it, I changed it, memory is out of date, nobody else has it |
+| **O** — Owned *(MOESI only)* | I have it, it is changed, others may have copies, I am responsible for it |
+| **E** — Exclusive | I have it, unchanged, nobody else has a copy |
+| **S** — Shared | I have it, unchanged, others may have it too |
+| **I** — Invalid | I do not have it |
+
+## 2. What we are actually building
+
+D16 already settled the goal: **not a coherence protocol, but a comparison of
+two.** One setting, `COHERENCE = MESI` or `MOESI`, picks between them in the
+same design driven by the same test programs. Then we measure how much memory
+traffic each causes, and how long shared data takes to reach the other core.
+
+That decides every design question where there is a choice: anything that would
+turn the two protocols into structurally different hardware is the wrong
+answer, because it ruins the comparison.
+
+---
+
+## 3. Two things we thought we needed, and do not
+
+Both came out of reading what the existing cache already does.
+
+### 3.1 We do not need a second copy of the cache tags
+
+Every cache keeps a "tag" for each line, recording which address that line
+holds. The core reads the tags constantly. Once snooping is added, the snoop
+logic needs to read them too — and if both want to read in the same cycle, they
+collide.
+
+The standard fix is a **second copy of all the tags**, one per reader. D21
+assumed we would need this and budgeted the area: "before P4 duplicates the D$
+tags for snooping".
+
+We do not need it. That fix exists because tags usually live in an SRAM block,
+and an SRAM block has a fixed, small number of ports. Our tags are not in SRAM.
+D19 put them in ordinary flip-flops, and only the *data* array is an SRAM
+block:
 
 ```verilog
     // Tag array (flops, D19)
@@ -43,187 +72,167 @@ the **data** array is a macro. D19 put the tag array in flops:
     reg                dirty_q [0:LINES-1];
 ```
 
-A flop array has as many combinational read ports as you build muxes for. The
-snoop path therefore costs a second index mux and comparator — tens of gates —
-not a second copy of 1,344 flops (~9.1 kGE). **The area D21 reserved for tag
-duplication is not needed.**
+A block of flip-flops can be read from as many places as you build wiring for.
+So adding a snoop read costs a handful of gates rather than a second copy of
+1,344 flip-flops — about **9.1 kGE saved per data cache**, and one fewer thing
+that can go wrong, since two copies of the same information can drift apart.
 
-What *does* still need arbitration is tag **writes**: a snoop that
-downgrades a line and a core access that fills one must not write the same
-entry in the same cycle. That is a conflict between two writers, resolved by
-priority (§5.3), and it is much cheaper than duplication.
+What still needs sorting out is *writing* the tags. A snoop that invalidates a
+line and a core access that fills one must not write the same entry in the same
+cycle. That is a much cheaper problem — see §5.3.
 
-### 2.2 MESI costs zero extra tag state
+### 3.2 MESI needs no extra storage at all
 
-The D$ already stores two bits per line, `valid_q` and `dirty_q`, encoding
-three reachable conditions. MESI has four states — also two bits:
+Each cache line already stores two flags: `valid` (do I have this line?) and
+`dirty` (have I changed it?). That is two bits. MESI has four states, which
+also fits in two bits:
 
-| current encoding | MESI state |
+| what we store today | MESI state |
 |---|---|
-| `!valid` | **I** — invalid |
-| `valid && !dirty` | **S** or **E** — this is the split MESI adds |
-| `valid && dirty` | **M** — modified |
+| not valid | **I** |
+| valid, not dirty | **S** or **E** — the only new distinction |
+| valid, dirty | **M** |
 
-So the entire cost of **MESI** in the tag array is *distinguishing E from S*,
-which the existing two bits already have room to express. Re-encoding
-`{valid, dirty}` as a 2-bit `state_q` is a rename, not a growth.
+So the entire cost of MESI in the tag array is being able to tell **S** from
+**E**. Replacing the two flags with one 2-bit state is a rename, not growth.
 
-**MOESI is not free, and the difference is one bit.** M, O, E, S, I is five
-states, so P5 needs a third bit per line: +64 flops per D$ at the D21 geometry
-(64 lines), about 0.43 kGE each, 0.86 kGE across both. Negligible against the
-20.68 kGE the data macro costs, but it is a real increment and the P5 area
-line should carry it rather than inherit MESI's "free" by assumption.
+**MOESI is not free the same way.** M, O, E, S, I is five states, which does
+not fit in two bits, so it needs a third bit: 64 extra flip-flops per data
+cache at our current size, about 0.43 kGE each, 0.86 kGE for both. Tiny next to
+the 20.68 kGE the data memory block costs, but real — and the S2 area budget
+should carry it rather than assume MESI's "free" carries over.
 
-This is worth stating because it inverts the intuition that coherence is
-expensive in the tag array. MESI here is free; MOESI is one bit per line; the
-cost of both lands in control logic and in the bus, not in tag state.
+**Measured after the change landed, 2026-09-03**, using the same scripts as the
+earlier area table:
 
-**Measured, 2026-09-03**, after the re-encode landed — sg13g2, same scripts as
-the P3 area table (RETARGET.md §10.4):
-
-| | flops before | flops after | area before µm² | area after µm² |
+| | flip-flops before | after | area before | area after |
 |---|---|---|---|---|
-| `cache` I$ | 1,529 | **1,529** | 120,619 | 120,751 (+0.11%) |
-| `cache` D$ | 1,530 | **1,530** | 124,168 | 123,351 (−0.66%) |
+| Instruction cache | 1,529 | **1,529** | 120,619 µm² | 120,751 µm² (+0.11%) |
+| Data cache | 1,530 | **1,530** | 124,168 µm² | 123,351 µm² (−0.66%) |
 
-Flop-identical, as predicted. The area moves are synthesis noise in the
-surrounding logic — and the D$ came out slightly *smaller*, because
-`state_q == ST_M` is one 2-input AND where `valid_q && dirty_q` was a pair of
-separate flop reads feeding the same comparison.
+Identical flip-flop counts, as predicted. The small area movements are ordinary
+variation in the surrounding logic — and the data cache came out slightly
+*smaller*, because comparing one 2-bit value is simpler than reading two
+separate flags and combining them.
 
 ---
 
-## 3. New decisions
+## 4. Decisions
 
-| # | Decision | Alternatives | Why |
+| # | Decision | What else we considered | Why |
 |---|---|---|---|
-| **D23** | **No duplicate snoop tag array.** The snoop port is a second combinational read port on the existing tag flops, with write arbitration against the core port. | Duplicate tags (the D21 assumption); dual-port SRAM tags | §2.1. Duplication solves an SRAM port conflict this design does not have, because D19 already put tags in flops. Saves ~9.1 kGE per D$ against the D21 budget, and removes the coherence problem duplicated tags create — two copies that must be kept identical are two things that can disagree. |
-| **D24** | **MESI/MOESI state replaces `{valid, dirty}` in place**, as a 2-bit `state_q`. Landed 2026-09-03, measured flop-identical (§2.2). | A separate coherence-state array alongside valid/dirty | §2.2. Same flop count, and it makes the invariant "state is the single source of truth for this line" structural rather than something to maintain. A separate array would allow `valid=0` with `state=M`, a class of bug that then has to be proven absent. |
-| **D25** | **The I$ stays outside the coherence domain.** Only the D$ snoops and is snooped. | I$ participates in the protocol | The core traps `FENCE.I` (§10.1 of RETARGET.md) and self-modifying code is already unsupported, so instruction memory is immutable by construction and an incoherent I$ cannot be observed. Halves the snoop logic and the protocol state space to prove. The restriction is a real limitation and is recorded as one, not hidden: a program that writes code for the other core is outside the supported model. |
-| **D26** | **Single outstanding bus transaction, round-robin arbiter.** | Split-transaction bus with MSHRs | The existing cache memory port is already single-outstanding valid/ready (§4), so this is the shape the caches already speak. A split-transaction bus is the interesting engineering problem but it multiplies the protocol state space — concurrent transactions to the same line are exactly where coherence bugs live — and P4/P5 already carry "coherence verification scope underestimated" as the loosest estimate in the plan (§8). Atomic bus first; it is the configuration in which the MESI/MOESI comparison is still valid, because both protocols see the same bus. |
+| **D23** | **No second copy of the tags.** Snooping reads the existing tag flip-flops through added wiring, with the two writers arbitrated. | Duplicate tags, as D21 assumed; dual-port SRAM tags | §3.1. Duplication solves an SRAM port conflict this design does not have. Saves about 9.1 kGE per data cache, and removes the risk of two copies disagreeing. |
+| **D24** | **The coherence state replaces `valid` and `dirty`** rather than sitting beside them, as one 2-bit value. | A separate coherence-state array alongside the existing flags | §3.2. Same storage, and it makes "the state is the one true record for this line" a fact about the hardware rather than a rule to maintain. Keeping both would allow nonsense combinations like "not valid, but modified", which then have to be proven impossible. |
+| **D25** | **The instruction cache stays out of the coherence system.** Only data caches snoop and are snooped. | Have the instruction cache participate too | The processor already refuses the `FENCE.I` instruction, so programs that modify their own code are not supported. Instruction memory therefore never changes while running, and an out-of-date instruction cache cannot be observed. This halves the snooping logic and the number of situations to prove. It is a genuine limitation — a program writing code for the other core is outside what this chip supports — and it is written down rather than hidden. |
+| **D26** | **One request on the bus at a time, with a round-robin arbiter.** | A bus handling several overlapping requests, with miss-tracking registers | It is the shape the caches already speak: the existing memory port handles one request at a time. Overlapping requests are the more interesting engineering problem, but they multiply the situations to get right, and concurrent requests for the *same* line are exactly where coherence bugs live. The project already lists two-core verification as its least predictable estimate. Both protocols see the same bus either way, so the comparison stays fair. |
 
 ---
 
-## 4. Bus
+## 5. How the protocol works
 
-Extends the cache's existing single-outstanding valid/ready memory port
-rather than replacing it, so the uncacheable and fault paths are unchanged.
+### 5.1 Bus requests
 
-| transaction | issued when | effect on the other cache |
+These extend the cache's existing memory interface rather than replacing it, so
+the uncached and error paths do not change.
+
+| request | sent when | what the other cache does |
 |---|---|---|
-| `BusRd` | read miss | M → writeback then S; E/S → S |
-| `BusRdX` | write miss | M → writeback then I; E/S → I |
-| `BusUpgr` | write hit on S | E/S → I. No data moves — this is the transaction MOESI's O state changes |
-| `BusWB` | eviction of M | none (memory only) |
+| `BusRd` | read miss | M → write it back, then S; E or S → S |
+| `BusRdX` | write miss | M → write it back, then I; E or S → I |
+| `BusUpgr` | writing to a line held as shared | E or S → I. No data moves. This is the request MOESI changes |
+| `BusWB` | throwing out a modified line | nothing — it only goes to memory |
 
-Snoop response, combinational, from the snooping cache back to the bus:
+The snooping cache answers immediately with two signals: `snoop_shared` ("I
+have this line, unchanged") and `snoop_dirty` ("I have it and I changed it").
 
-- `snoop_shared` — I have this line in S or E
-- `snoop_dirty` — I have it in M, and must supply or write back
+**The one real difference between the protocols.** Under MESI, a cache snooped
+while holding modified data must write that data back to memory, and the
+requester then reads it from memory. Under MOESI, the holder keeps the line in
+the **O** state and passes it straight to the other cache, with no memory write
+at all. Counting the memory writes MOESI avoids is exactly the measurement S2
+exists to produce.
 
-Under **MESI** a snooped M line is flushed to memory and the requester takes
-its data from memory. Under **MOESI** the owner keeps the line in O and
-supplies it cache-to-cache with no memory write. That single difference is
-the measurement P5 exists to produce: the same workload, the same RTL, and a
-count of writebacks that MOESI avoids.
-
----
-
-## 5. Protocol
-
-### 5.1 MESI, core-side
+### 5.2 State changes at the requesting core
 
 ```mermaid
 stateDiagram-v2
     [*] --> I
-    I --> S: read miss, snoop_shared
-    I --> E: read miss, no sharer
-    I --> M: write miss (BusRdX)
-    S --> M: write hit (BusUpgr)
-    E --> M: write hit, silent
-    E --> S: snooped BusRd
-    M --> S: snooped BusRd (writeback)
-    M --> I: snooped BusRdX (writeback)
-    S --> I: snooped BusRdX or BusUpgr
-    E --> I: snooped BusRdX
-    M --> I: eviction (BusWB)
+    I --> S: read miss, someone else has it
+    I --> E: read miss, nobody else has it
+    I --> M: write miss
+    S --> M: write hit, after BusUpgr
+    E --> M: write hit, no bus traffic needed
+    E --> S: another core reads it
+    M --> S: another core reads it (write back first)
+    M --> I: another core writes it (write back first)
+    S --> I: another core writes it
+    E --> I: another core writes it
+    M --> I: line thrown out
 ```
 
-The **E state is the reason MESI beats MSI** here: a read miss with no other
-sharer lands in E, and the subsequent write is then a silent E → M with no bus
-transaction at all. In a 2-core system running mostly private data, that is
-the common case.
+**The E state is why MESI beats the simpler MSI protocol.** A read miss where
+nobody else holds the line lands in **E**, and a later write then goes straight
+to **M** with no bus traffic at all. On two cores running mostly private data,
+that is the common case.
 
-### 5.2 Snoop-side response table
+### 5.3 Who wins when both want to write a tag
 
-| state | BusRd | BusRdX | BusUpgr |
-|---|---|---|---|
-| I | — | — | — |
-| S | → S, `snoop_shared` | → I | → I |
-| E | → S, `snoop_shared` | → I | → I |
-| M | → S, `snoop_dirty`, writeback | → I, `snoop_dirty`, writeback | → I, `snoop_dirty`, writeback ¹ |
+Both the core and the snoop logic can want to change a tag entry in the same
+cycle. **The snoop wins.**
 
-¹ Reachable only if the requester held S while this cache held M, which the
-protocol forbids. It is listed because the RTL must do *something* defined
-there, and because "unreachable" is a claim the formal work in §6 should
-prove rather than assume.
-
-### 5.3 Tag write arbitration (D23)
-
-Both ports can write a tag entry in one cycle. Priority: **snoop wins.**
-
-A snoop response is already committed on the bus by the time the tag write
-happens — the requesting cache has been told `shared` or `dirty` — so
-deferring the local downgrade would leave the two caches disagreeing about a
-line for a cycle, which is precisely the invariant §6 is built to protect.
-The core-side access instead stalls one cycle, which the cache already knows
-how to do (`c_ready` low). Cost is a rare single-cycle stall; benefit is that
-the coherence invariant is never transiently false.
+By the time the tag write happens, this cache has already answered "shared" or
+"modified" on the bus. Delaying our own update would leave the two caches
+briefly disagreeing about that line — exactly what the whole design exists to
+prevent. So the core's access waits one cycle instead, which the cache already
+knows how to do. The cost is a rare one-cycle stall. The benefit is that the
+caches are never, even briefly, out of step.
 
 ---
 
-## 6. Verification
+## 6. How it gets verified
 
-D22 put the formal boundary at the core's ports and gave the cache its own
-property. P4 extends that scheme rather than replacing it: the coherence
-controller gets its own invariants, stated over the same one-address
-abstraction that CACHE-FV-01 uses.
+D22 put the formal proof boundary at the processor's edge and gave the cache
+its own separate property. S2 extends that arrangement rather than replacing
+it.
 
-**The invariants** (targets for `dv/formal/coherence`):
+**What has to be proven:**
 
-| ID | Invariant |
+| ID | Property |
 |---|---|
-| COH-INV-01 | **SWMR** — for any address, either exactly one cache holds it in M, or no cache does. Never two writers. |
-| COH-INV-02 | A line in S or E in one cache is never in M in the other. |
-| COH-INV-03 | Data value — a read returns the value of the most recent write to that address by *either* core. CACHE-FV-01 generalised to two caches, and the property the whole milestone is for. |
-| COH-INV-04 | No transaction leaves a line in a state not in the table in §5.2. |
+| COH-INV-01 | For any address, either exactly one cache holds it as modified, or none does. Never two writers at once. |
+| COH-INV-02 | A line held as shared or exclusive in one cache is never modified in the other. |
+| COH-INV-03 | A read returns the value of the most recent write by *either* core. This is the existing single-cache property extended to two caches, and it is the point of the whole milestone. |
+| COH-INV-04 | No sequence of requests can leave a line in a state that is not in the table above. |
 
-**Litmus tests** (directed, `dv/coherence`): store buffering (SB), message
-passing (MP), coherence of a single location (CoRR), and the O-state transfer
-that separates MOESI from MESI. These are the standard shapes and they are
-cheap to write once the bus exists.
+**Directed tests** (`dv/coherence`): the standard shapes that catch coherence
+bugs — store buffering, message passing, repeated reads of one location — plus
+the cache-to-cache transfer that separates MOESI from MESI. These are cheap to
+write once the bus exists.
 
-**Inherited from P3.** The D$ leg of CACHE-FV-01 does not close by BMC: it
-needs depth 28 to reach an eviction and costs ~4× per step (RETARGET.md
-§10.5). COH-INV-03 is a strictly harder version of the same property over
-two caches, so **it will not close by BMC either**, and P4 should not spend
-days rediscovering that. The k-induction machinery that P3 deferred is not
-optional here — it is the P4 critical path, and it should be built before the
-protocol RTL is finished rather than after, so the invariants can be developed
-against a proof method that can actually evaluate them.
+### The scheduling problem inherited from P3
 
-That is the single most important scheduling consequence of P3's result.
+The single-cache version of COH-INV-03 **already does not finish** with the
+bounded proof method. It needs to look 28 cycles ahead, and each extra cycle
+costs about four times the last (see RETARGET.md §10.5). COH-INV-03 is a
+strictly harder version of that same property across two caches, so **it will
+not finish either**, and S2 should not spend days rediscovering that.
+
+So the better proof technique P3 postponed is not optional here. It is the
+critical path, and it should be built **before** the protocol hardware is
+finished, so the properties can be developed against a method that can actually
+evaluate them. That is the single most important consequence of P3's result for
+this milestone.
 
 ---
 
-## 7. Open questions
+## 7. Still to decide
 
-1. **Does the arbiter need to be fair, or just non-starving?** Round-robin is
-   assumed. A litmus test that livelocks under an unfair arbiter would be
-   worth having before deciding.
-2. **Where does the writeback buffer live** — per cache, or one in the bus? A
-   shared one is less area; a per-cache one keeps the caches independent,
-   which matters for the formal decomposition.
-3. **MOESI's O → M transition on a local write** needs a `BusUpgr` while the
-   line is dirty. Confirm this against the P5 comparison before committing the
-   encoding, since it is the one transition with no MESI analogue.
+1. **Does the arbiter have to be strictly fair, or just never starve anyone?**
+   Round-robin is assumed. Worth writing a test that would deadlock under an
+   unfair arbiter before settling this.
+2. **Where does the write-back buffer live** — one per cache, or one shared in
+   the bus? Shared is smaller; per-cache keeps the caches independent, which
+   matters for splitting up the proofs.
+3. **MOESI's owned-to-modified step on a local write** needs a `BusUpgr` while
+   the line is already dirty. Worth confirming against the comparison before
+   fixing the encoding, since it is the one transition with no MESI equivalent.

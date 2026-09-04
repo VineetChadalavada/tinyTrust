@@ -151,7 +151,7 @@ module cache #(
     // it.
     //
     // MOESI (P5) needs a fifth state and therefore a third bit -- +LINES flops
-    // per D$. Not free, unlike MESI; see COHERENCE.md 2.2.
+    // per D$. Not free, unlike MESI; see COHERENCE.md section 3.2.
 
     reg [TAG_BITS-1:0] tag_q   [0:LINES-1];
     reg [1:0]          state_q [0:LINES-1];
