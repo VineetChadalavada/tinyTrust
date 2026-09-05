@@ -220,11 +220,25 @@ this does *not* establish are in
 ### The one that looked hard is not
 
 hft-chip used Calibre for layout-versus-schematic, which is a commercial tool.
-Checking the installed platform, that is not needed here: it already ships
-`lvs/sg13g2.lvs` with `run_lvs.py`, and signoff DRC decks
-(`drc/sg13g2_minimal.lydrc`, `sg13g2_maximal.lydrc`), all driven by KLayout.
-So the whole path stays open-source, which is a slightly better result than the
-thing being matched.
+That is not needed here: the platform already ships `lvs/sg13g2.lvs` with
+`run_lvs.py`, and signoff DRC decks (`drc/sg13g2_minimal.lydrc`,
+`sg13g2_maximal.lydrc`), all driven by KLayout. The whole path stays
+open-source, which is a slightly better result than the thing being matched.
+
+**One correction to an earlier version of this note.** It said ORFS has
+`make drc` and `make lvs` targets that drive those decks. `make drc` does.
+`make lvs` does not — on this platform the target writes the string "LVS not
+supported on this platform" into its own output file and exits successfully:
+
+```
+echo "LVS not supported on this platform" > .../6_lvs.lvsdb
+```
+
+That is a step reporting success without checking anything, which is the same
+false green as BUG-003 and BUG-006 and would have been easy to mistake for a
+clean result. The deck is real and usable; it is simply not wired into the
+target, so `pd/designs/tinytrust_soc/run_signoff.sh` builds the full netlist
+and calls it directly.
 
 The pad ring is there too: `sg13g2_io.lef` has the IO cells (input, output at
 4/16/30 mA, tri-state, corner and filler), `bondpad_70x70.lef` has the bond

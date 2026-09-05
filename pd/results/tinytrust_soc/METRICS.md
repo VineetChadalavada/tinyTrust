@@ -28,6 +28,7 @@ the pad's own delay, into the logic, and back out through an output pad.
 | Worst setup slack | **+0.72 ns** against the 10 ns constraint |
 | TNS / WNS | 0.00 / 0.00 |
 | **Router DRC** | **0 violations** (`5_route_drc.rpt` empty) |
+| **Signoff DRC** | **22 violations, all density/fill** — see below |
 | Power grid | all VDD and VSS shapes connected; worst IR drop 0.294 mV (0.02%) |
 | Power | 4.34 mW |
 | GDS | `6_final.gds`, 99.2 MB |
@@ -74,11 +75,44 @@ The LVS row is the interesting one. hft-chip used Calibre, which is commercial.
 The platform ships `lvs/sg13g2.lvs` and `run_lvs.py` driven by KLayout, so this
 chip's whole path from source to signoff stays open-source.
 
+It is not as simple as running the ORFS target, though. `make lvs` on this
+platform writes the string "LVS not supported on this platform" into its own
+output file and exits 0 — a step that reports success without checking
+anything, which is precisely the false-green pattern of BUG-003 and BUG-006.
+The deck is real; it is just not wired into the target.
+`pd/designs/tinytrust_soc/run_signoff.sh` assembles the full netlist — the
+design plus the standard cell, IO pad and SRAM macro netlists, without which
+every instance reads as an unresolved black box — and calls the deck itself.
+
 ## What this does NOT establish
 
-- **Signoff DRC and LVS are not in the table above yet.** The 0 violations is
-  the *router's* own check, which is not the same thing as KLayout's rule deck.
-  Both are running; this file is updated when they land.
+- **Signoff DRC is not clean: 22 violations.** This is exactly why the
+  distinction matters. The router's own check reports zero, and KLayout's rule
+  deck then finds 22 — because they check different things. Every one of the 22
+  is a *density* rule, not connectivity or spacing:
+
+  | count | rule | requirement |
+  |---|---|---|
+  | 19 | `M2Fil.h/k` | Metal2 plus filler coverage in any 800 × 800 µm window must be 25–75% |
+  | 1 | `M2.j/k` | global Metal2 density 35–60% |
+  | 1 | `GFil.g` | global GatPoly density at least 15% |
+  | 1 | `AFil.g/g1` | Activ density |
+
+  Foundries require a *minimum* metal density as well as a maximum, because
+  chemical-mechanical polishing dishes out large empty regions and ruins
+  planarity. A chip at 62% utilisation on a die this size has a lot of empty
+  area, and the standard-cell filler that `USE_FILL` inserts is not the same
+  thing as metal fill across the die.
+
+  The likely concentration is the ring between the core box and the pad ring —
+  351 µm of it on every side, with no logic in it and therefore almost no
+  metal. That is a hypothesis from the geometry, not yet confirmed against the
+  violation coordinates, and confirming it is the first step in fixing this.
+
+  Density fill is routine tape-out work rather than a design problem, but it is
+  work, and the chip is not signoff-clean until it is done.
+
+- **LVS has not returned a verdict yet.**
 - **No gate-level simulation** of the routed netlist. The design is verified at
   RTL — 44/44 proofs, zero co-simulation disagreements, and a whole-chip test
   that boots and runs a program — but nothing has yet re-run those against
@@ -107,7 +141,7 @@ bash pd/designs/sram_smoke/patch_sram_lib.sh
 source /opt/OpenROAD-flow-scripts/env.sh
 cd /opt/OpenROAD-flow-scripts/flow
 make DESIGN_CONFIG=/mnt/e/tinytrust/pd/designs/tinytrust_soc/config.mk
-make DESIGN_CONFIG=... drc lvs
+bash pd/designs/tinytrust_soc/run_signoff.sh both
 ```
 
 Toolchain as P0: OpenROAD `26Q3-1278-g4421880472`, Yosys `0.68+`, KLayout
