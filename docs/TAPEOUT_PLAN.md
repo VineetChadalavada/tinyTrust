@@ -192,6 +192,49 @@ costs nothing to plan properly at S1 and a great deal to fix afterwards.
 
 ---
 
+## 4a. The physical target, concretely
+
+The finished chip is meant to stand next to
+[noah-gigler/hft-chip](https://github.com/noah-gigler/hft-chip), which took a
+design to this same process with open tools and reports a specific set of
+numbers. Rather than "make it good", the target is that exact set, so it can be
+checked rather than argued about.
+
+| | hft-chip reports | S1 target | where we are (2026-09-05) |
+|---|---|---|---|
+| Process | IHP SG13G2, 130 nm | same | ✅ same |
+| Die | 2500 × 2000 µm, QFN-64, 48 signal pads | same footprint | ❌ no pad ring yet; P0 was a 640 × 640 µm core-only harden |
+| Utilisation | 54% | comparable | 42% core-only, not the same measurement |
+| Maximum frequency | 112 MHz (1.08 ns slack at 10 ns) | reported for the **full chip with pads** | 144 MHz core-only — deliberately *not* comparable, see `pd/results/p0/METRICS.md` |
+| Power | 269 mW | reported | 19.7 mW core-only. Ours should be far lower: theirs is a much larger design running every cycle |
+| DRC | clean | clean, **signoff** | only the router's own check so far, which is not the same thing |
+| LVS | clean (Calibre) | clean (**KLayout**) | never run |
+| Die render | published | published | ✅ for the core and the memory test |
+| Written report | `report/*.pdf` with sweeps | equivalent | docs, but no single report artifact |
+
+### The one that looked hard is not
+
+hft-chip used Calibre for layout-versus-schematic, which is a commercial tool.
+Checking the installed platform, that is not needed here: it already ships
+`lvs/sg13g2.lvs` with `run_lvs.py`, and signoff DRC decks
+(`drc/sg13g2_minimal.lydrc`, `sg13g2_maximal.lydrc`), all driven by KLayout.
+So the whole path stays open-source, which is a slightly better result than the
+thing being matched.
+
+The pad ring is there too: `sg13g2_io.lef` has the IO cells (input, output at
+4/16/30 mA, tri-state, corner and filler), `bondpad_70x70.lef` has the bond
+pads, and `pad.tcl` places a ring from four lists of pin names. hft-chip took
+its pad ring from the Croc SoC; the same cells are in the platform we already
+have installed.
+
+### Pin budget
+
+The chip currently needs 15 signal pins: clock, reset, serial in and out, four
+general-purpose in, four out, the alert pin and two mode straps. A 64-pin
+package has room for far more, so the spare pins are worth spending on
+something — wider general-purpose I/O and a debug output — rather than leaving
+them bonded to nothing. That is an S1-C decision and is taken there.
+
 ## 5. S1 milestones
 
 | | Milestone | Done when |

@@ -32,6 +32,7 @@
 module soc_top #(
     parameter USE_MACRO       = 1,        // 0 = behavioural memory, for sim
     parameter N_RAM_MACRO     = 4,        // 4 x 4 KB = 16 KB
+    parameter GPIO_W          = 4,        // widened to 16 on the real chip
     parameter [15:0] UART_DIV_RESET = 16'd10415
 ) (
     input  wire       clk,
@@ -39,8 +40,8 @@ module soc_top #(
 
     input  wire       uart_rx,
     output wire       uart_tx,
-    output wire [3:0] gpio_out,
-    input  wire [3:0] gpio_in,
+    output wire [GPIO_W-1:0] gpio_out,
+    input  wire [GPIO_W-1:0] gpio_in,
     output wire       sec_alert,
     input  wire [1:0] straps
 );
@@ -157,7 +158,7 @@ module soc_top #(
     // ------------------------------------------------------------------
     // Slave 2 -- peripherals
     // ------------------------------------------------------------------
-    soc_mmio #(.GPIO_W(4), .UART_DIV_RESET(UART_DIV_RESET)) u_mmio (
+    soc_mmio #(.GPIO_W(GPIO_W), .UART_DIV_RESET(UART_DIV_RESET)) u_mmio (
         .clk(clk), .rst_n(rst_n),
         .s_valid(bs_valid[2]), .s_addr(bs_addr), .s_wdata(bs_wdata),
         .s_wstrb(bs_wstrb), .s_ready(bs_ready[2]),
