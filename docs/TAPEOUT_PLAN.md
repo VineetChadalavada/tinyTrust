@@ -81,12 +81,12 @@ start up, run a program, and tell you that it did.
 |---|---|
 | The pipelined processor and its memory protection | **done**, 44/44 proof checks, zero simulation disagreements |
 | 4 KB instruction cache and 4 KB data cache | **done**, tested at block and system level; instruction cache proven correct |
-| On-chip main memory, 16–32 KB | the memory blocks are **proven** to work in the tool flow; wiring several together is new |
-| Start-up code in ROM | currently a placeholder — needs a real one |
-| Serial port, send and receive | **not written** |
-| General-purpose input/output pins | **not written** |
-| Timer | **not written**; the processor already has the interrupt input for it |
-| ASCON crypto block | **done**, passes all 66 test vectors; needs connecting to the bus |
+| On-chip main memory, 16 KB | **written and tested** 2026-09-05 — four blocks behind one bus slave |
+| Start-up code in ROM | **written and tested** 2026-09-05 — a serial loader, `tools/gen_bootrom.py` |
+| Serial port, send and receive | **written and tested** 2026-09-05 — checked by decoding the waveform, not by reading its own status register |
+| General-purpose input/output pins | **written and tested** 2026-09-05 |
+| Timer | **written and tested** 2026-09-05, and wired to the processor's interrupt input |
+| ASCON crypto block | **done**, passes all 66 test vectors; still to be connected to the bus |
 | A simple bus | **written and tested** 2026-09-05 — `rtl/soc/soc_bus.v` |
 | Pads and package | **not started** |
 
@@ -138,13 +138,23 @@ cache already performs. Peripherals must not be cached — a write-back cache
 would swallow a write to a device register — so this had to be right, and it
 cost no hardware change.
 
-### Does it fit?
+### Does it fit? — now measured
 
-The processor with both caches measured 99.98 kGE, about 0.73 mm². Add 16 KB of
-main memory — four blocks at 150,102 µm² each — for about 0.60 mm², plus small
-peripherals. That is roughly **1.4 mm²**, comfortable on a 2 × 2 mm die. The
-die size will be set by how many pads are needed rather than by the circuits
-inside, which is what the earlier planning already expected.
+The estimate was: processor with both caches 99.98 kGE (0.73 mm²), plus 16 KB
+of main memory at 0.60 mm², plus small peripherals — roughly **1.4 mm²**.
+
+**Measured 2026-09-05**, with the whole chip synthesised as one design:
+
+| | |
+|---|---|
+| Standard cells | 433,495 µm² = **59.7 kGE** |
+| Flip-flops | 4,958 |
+| SRAM blocks | **6** — one per cache, four for main memory |
+| Blocks at 150,102 µm² each | 900,612 µm² |
+| **Total** | **1,334,107 µm² = 1.33 mm²** |
+
+Against a 1.4 mm² estimate, on a 4 mm² die. The estimate held, and the die is
+still limited by how many pads it needs rather than by what is inside it.
 
 ---
 
@@ -186,7 +196,7 @@ costs nothing to plan properly at S1 and a great deal to fix afterwards.
 
 | | Milestone | Done when |
 |---|---|---|
-| **S1-A** | Connect it all together | Bus, serial port, I/O pins, timer, start-up ROM, memory, top level. Every block tested on its own, and the memory map matches ARCHITECTURE.md §4 |
+| **S1-A** | Connect it all together | ✅ **done 2026-09-05.** Bus, serial port, I/O pins, timer, serial boot ROM, main memory and the top level, each tested on its own plus a whole-chip smoke test that loads a program over the serial port and runs it. Memory map per §3 above |
 | **S1-B** | Whole-chip simulation and software | Start-up code runs, software prints over the serial port, the crypto test vectors run on-chip, a timer interrupt is taken. The reference-model comparison still shows zero disagreements at chip level |
 | **S1-C** | Pads and full-chip layout | Pad ring, floorplan with several memory blocks placed, power grid, clock tree, routing. Timing met across the whole chip, zero routing violations |
 | **S1-D** | Final checks | DRC clean, **LVS clean**, and gate-level simulation running the S1-B software |

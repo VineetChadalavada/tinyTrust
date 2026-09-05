@@ -54,7 +54,8 @@ module tb_soc_bus;
     wire [3:0]       s_wstrb;
     wire [NS*32-1:0] s_rdata;
 
-    soc_bus #(.NM(NM), .NS(NS), .SLAVE_NIBBLE(16'h3210)) dut (
+    soc_bus #(.NM(NM), .NS(NS),
+             .SLAVE_MASK({16'h0008, 16'h0004, 16'h0002, 16'h0001})) dut (
         .clk(clk), .rst_n(rst_n),
         .m_valid(m_valid), .m_addr(m_addr), .m_wdata(m_wdata),
         .m_wstrb(m_wstrb), .m_ready(m_ready), .m_rdata(m_rdata),

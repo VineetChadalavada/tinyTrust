@@ -31,7 +31,11 @@ something is an estimate, it says so.
 | **Instruction-set proof** | **44 of 44** checks pass, on both processor cores |
 | **Reference cross-check** | Zero disagreements over 18,973 instructions |
 | **Caches** | 4 KB instruction + 4 KB data, on real foundry memory blocks |
-| **Working on now** | S1 — the simplest complete chip, heading to first manufacture |
+| **Working on now** | S1 — the chip boots, loads a program over serial and runs it |
+
+The chip currently starts up, says hello over its serial port, accepts a
+program sent to it, writes it into memory and runs it — all in simulation, with
+the whole design synthesised at 1.33 mm².
 
 <table>
 <tr>
@@ -247,8 +251,8 @@ removes risk for the next. Full detail in
 
 | | | |
 |---|---|---|
-| **S1-A** | Connect it together: bus, serial port, timer, boot code, memory | ⬅ next |
-| **S1-B** | Simulate the whole chip and get software running on it | |
+| **S1-A** | Connect it together: bus, serial port, timer, boot code, memory | ✅ 2026-09-05 |
+| **S1-B** | Simulate the whole chip and get software running on it | ⬅ next |
 | **S1-C** | Add the external pins and lay out the full chip | |
 | **S1-D** | Final manufacturing checks | |
 | **S1-E** | Submit for manufacture | |

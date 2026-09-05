@@ -52,7 +52,9 @@ module sram_1p_bm #(
     input  wire [P_DATA_WIDTH-1:0]   A_BM,
     output reg  [P_DATA_WIDTH-1:0]   A_DOUT
 );
-    localparam DEPTH = (1 << P_ADDR_WIDTH);
+    // 32'd1, not 1: an unsized literal makes the shift an unsized
+    // expression, which iverilog widens to thousands of bits and warns about.
+    localparam DEPTH = (32'd1 << P_ADDR_WIDTH);
 
     reg [P_DATA_WIDTH-1:0] mem [0:DEPTH-1];
 

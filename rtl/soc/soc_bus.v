@@ -19,8 +19,17 @@
 //
 // ADDRESS DECODE
 // One nibble, addr[31:28], as ARCHITECTURE.md 4 specified. Cheap, and it is
-// what fixes the memory map. Each slave declares the nibble it answers to
-// through SLAVE_NIBBLE, four bits per slave with slave 0 in the low bits.
+// what fixes the memory map. Each slave declares which nibbles it answers to
+// as a 16-bit mask, one bit per nibble, packed 16 bits per slave with slave 0
+// in the low bits.
+//
+// A mask rather than a single nibble because one slave legitimately needs two
+// windows. Main memory appears twice: cached at 0x2, and again uncached at
+// 0x4 (D31). The boot loader writes the program it receives through the
+// uncached window, so the bytes are really in memory by the time it jumps --
+// otherwise they would sit dirty in the write-back data cache while the
+// instruction cache fetched stale memory behind it, and there is no flush
+// instruction to fix that (D25).
 //
 // An address matching no slave is answered immediately with ready and fault
 // in the same cycle. That is deliberate: an unmapped access must not hang the
@@ -35,10 +44,10 @@
 module soc_bus #(
     parameter NM = 2,                          // masters
     parameter NS = 4,                          // slaves
-    // Address nibble per slave, 4 bits each, slave 0 in the low bits.
-    // Default 0x3210: slave 0 -> 0x0, slave 1 -> 0x1, slave 2 -> 0x2,
-    // slave 3 -> 0x3, matching the S1 memory map (D30).
-    parameter [NS*4-1:0] SLAVE_NIBBLE = 16'h3210
+    // One 16-bit mask per slave: bit n set means "I answer to nibble n".
+    // Default gives slave k the single nibble k.
+    parameter [NS*16-1:0] SLAVE_MASK =
+        {16'h0008, 16'h0004, 16'h0002, 16'h0001}
 ) (
     input  wire                clk,
     input  wire                rst_n,
@@ -126,7 +135,7 @@ module soc_bus #(
     reg [NS-1:0] s_hit;
     always @* begin
         for (k = 0; k < NS; k = k + 1)
-            s_hit[k] = (sel_addr[31:28] == SLAVE_NIBBLE[k*4 +: 4]);
+            s_hit[k] = SLAVE_MASK[k*16 + sel_addr[31:28]];
     end
 
     wire mapped = |s_hit;
