@@ -69,14 +69,20 @@ module soc_chip (
     sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_15 (.pad(pad_gpio_out[15]), .c2p(gpio_out_o[15]));
 
     // ---- supply pads ----
-    sg13g2_IOPadVdd      sg13g2_IOPad_vdd0 ();
-    sg13g2_IOPadVss      sg13g2_IOPad_vss0 ();
-    sg13g2_IOPadIOVdd    sg13g2_IOPad_iovdd0 ();
-    sg13g2_IOPadIOVss    sg13g2_IOPad_iovss0 ();
-    sg13g2_IOPadVdd      sg13g2_IOPad_vdd1 ();
-    sg13g2_IOPadVss      sg13g2_IOPad_vss1 ();
-    sg13g2_IOPadIOVdd    sg13g2_IOPad_iovdd1 ();
-    sg13g2_IOPadIOVss    sg13g2_IOPad_iovss1 ();
+    // (* keep *) is load-bearing here. A supply pad has no ports and
+    // drives nothing, so nothing in the netlist refers to it and synthesis
+    // removes it as dead logic. The failure then surfaces much later and
+    // somewhere else, when the pad placer goes looking for it by name:
+    //
+    //   [ERROR PAD-0102] Unable to find instance: ..._vdd1
+    (* keep *) sg13g2_IOPadVdd      sg13g2_IOPad_vdd0 ();
+    (* keep *) sg13g2_IOPadVss      sg13g2_IOPad_vss0 ();
+    (* keep *) sg13g2_IOPadIOVdd    sg13g2_IOPad_iovdd0 ();
+    (* keep *) sg13g2_IOPadIOVss    sg13g2_IOPad_iovss0 ();
+    (* keep *) sg13g2_IOPadVdd      sg13g2_IOPad_vdd1 ();
+    (* keep *) sg13g2_IOPadVss      sg13g2_IOPad_vss1 ();
+    (* keep *) sg13g2_IOPadIOVdd    sg13g2_IOPad_iovdd1 ();
+    (* keep *) sg13g2_IOPadIOVss    sg13g2_IOPad_iovss1 ();
 
     // ---- the chip ----
     soc_top #(.USE_MACRO(1), .N_RAM_MACRO(4), .GPIO_W(16)) u_soc (

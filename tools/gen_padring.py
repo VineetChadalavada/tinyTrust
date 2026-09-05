@@ -141,9 +141,14 @@ def main():
                         % (name, port, sig))
 
         f.write("\n    // ---- supply pads ----\n")
+        f.write("    // (* keep *) is load-bearing here. A supply pad has no ports and\n")
+        f.write("    // drives nothing, so nothing in the netlist refers to it and synthesis\n")
+        f.write("    // removes it as dead logic. The failure then surfaces much later and\n")
+        f.write("    // somewhere else, when the pad placer goes looking for it by name:\n")
+        f.write("    //\n")
+        f.write("    //   [ERROR PAD-0102] Unable to find instance: ..._vdd1\n")
         for n, cell in POWER_PADS:
-            f.write("    %-20s %s ();\n" % (cell, PWR_PREFIX + n))
-
+            f.write("    (* keep *) %-20s %s ();\n" % (cell, PWR_PREFIX + n))
         f.write("\n    // ---- the chip ----\n")
         f.write("    soc_top #(.USE_MACRO(1), .N_RAM_MACRO(4), .GPIO_W(%d)) u_soc (\n"
                 % GPIO_W)

@@ -49,8 +49,9 @@ export SDC_FILE = $(TT_PD)constraint.sdc
 # IO pads and bond pads
 # ---------------------------------------------------------------------------
 # Setting FOOTPRINT_TCL makes the platform add the IO LEFs, GDS and the
-# slow/typ/fast IO libraries itself. Re-declaring the LEF, GDS and the slow
-# and fast corners is harmless, and the in-tree reference design does it too.
+# slow/typ/fast IO libraries itself, so none of those are declared here.
+# Re-declaring the LEF and GDS only produces "library already exists"
+# warnings; the slow and fast corners are harmless duplicates.
 #
 # Re-declaring the *typ* library is NOT harmless, and cost a synthesis run to
 # find. ABC reads only the typ corner, so a second copy hands it two cells of
@@ -63,12 +64,9 @@ export SDC_FILE = $(TT_PD)constraint.sdc
 # of the ADDITIONAL_LIBS finding in pd/results/sram_smoke/METRICS.md: which
 # of these variables reaches which tool is not obvious, and getting it wrong
 # fails somewhere unrelated.
-export ADDITIONAL_LEFS      += $(PLATFORM_DIR)/lef/sg13g2_io.lef \
-                               $(PLATFORM_DIR)/lef/bondpad_70x70.lef
 export ADDITIONAL_LIBS      += $(PLATFORM_DIR)/lib/sg13g2_io_typ_1p2V_3p3V_25C.lib
 export ADDITIONAL_SLOW_LIBS += $(PLATFORM_DIR)/lib/sg13g2_io_slow_1p08V_3p0V_125C.lib
 export ADDITIONAL_FAST_LIBS += $(PLATFORM_DIR)/lib/sg13g2_io_fast_1p32V_3p6V_m40C.lib
-export ADDITIONAL_GDS       += $(PLATFORM_DIR)/gds/sg13g2_io.gds
 
 export FOOTPRINT_TCL = $(PLATFORM_DIR)/pad.tcl
 include $(TT_PD)pins.mk
