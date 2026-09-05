@@ -8,5 +8,8 @@ if ($LASTEXITCODE -ne 0) { Write-Host "REGRESS FAIL: ascon_kat"; exit 1 }
 & "$PSScriptRoot\core_iss\run.ps1"
 if ($LASTEXITCODE -ne 0) { Write-Host "REGRESS FAIL: core_iss"; exit 1 }
 
+& "$PSScriptRoot\soc\run.ps1"
+if ($LASTEXITCODE -ne 0) { Write-Host "REGRESS FAIL: soc"; exit 1 }
+
 Write-Host "REGRESS PASS"
 exit 0

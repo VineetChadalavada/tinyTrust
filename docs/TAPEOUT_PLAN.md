@@ -87,7 +87,7 @@ start up, run a program, and tell you that it did.
 | General-purpose input/output pins | **not written** |
 | Timer | **not written**; the processor already has the interrupt input for it |
 | ASCON crypto block | **done**, passes all 66 test vectors; needs connecting to the bus |
-| A simple bus | **not written** — `rtl/soc/` is empty |
+| A simple bus | **written and tested** 2026-09-05 — `rtl/soc/soc_bus.v` |
 | Pads and package | **not started** |
 
 ### Deliberately left out
@@ -119,6 +119,25 @@ on outside the chip. For a first attempt that is the wrong trade. The memory
 map keeps its layout so software still works later; S1 just uses the on-chip
 regions.
 
+### The S1 memory map (D30)
+
+Decoded on the top address nibble only, as originally specified. S1 populates
+the on-chip regions and leaves the external one faulting.
+
+| Address | Region | Access | In S1 |
+|---|---|---|---|
+| `0x0000_0000` | Boot ROM | read, execute | populated |
+| `0x1000_0000` | External flash | read, execute | **not populated — faults** |
+| `0x2000_0000` | Main on-chip memory | read, write, execute | populated; code and data both live here |
+| `0x3000_0000` | Peripherals | read, write | populated, and uncached |
+| anything else | — | — | faults |
+
+Setting the cache's cacheable limit to `0x3000_0000` makes the first three
+regions cacheable and the peripherals uncached, using the single comparison the
+cache already performs. Peripherals must not be cached — a write-back cache
+would swallow a write to a device register — so this had to be right, and it
+cost no hardware change.
+
 ### Does it fit?
 
 The processor with both caches measured 99.98 kGE, about 0.73 mm². Add 16 KB of
@@ -134,11 +153,16 @@ inside, which is what the earlier planning already expected.
 This is the part that decides whether "we can extend it later" is real or
 wishful.
 
-1. **The bus is shaped the way the two-core bus will need.** The caches already
-   speak a simple one-request-at-a-time interface, and D26 already chose that
-   same interface for the coherent bus. If S1's bus is that interface with a
-   single master, S2 swaps in a new arbiter and adds the snoop channel without
-   touching the caches or the processor.
+1. **The bus is shaped the way the two-core bus will need, and it already
+   arbitrates.** The caches speak a simple one-request-at-a-time interface, and
+   D26 chose that same interface for the coherent bus. Better than expected:
+   S1 is not single-master. The instruction cache and the data cache each have
+   their own memory port, so there are two masters and a round-robin arbiter
+   from the first chip — measured alternating strictly under sustained
+   contention. Arbitration is therefore not something S2 introduces and has to
+   debug on a two-core design; it is exercised from S1. S2 adds the snoop
+   channel and a third and fourth master, without touching the caches or the
+   processor.
 2. **The cache line state is already in the right shape.** D24 replaced the old
    `valid`/`dirty` flags with a 2-bit state, and it measured identical in size.
    S1 ships lines that are only ever invalid, exclusive or modified; S2 makes
