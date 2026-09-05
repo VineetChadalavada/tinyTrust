@@ -200,17 +200,22 @@ design to this same process with open tools and reports a specific set of
 numbers. Rather than "make it good", the target is that exact set, so it can be
 checked rather than argued about.
 
-| | hft-chip reports | S1 target | where we are (2026-09-05) |
+| | hft-chip reports | TinyTrust S1 | |
 |---|---|---|---|
-| Process | IHP SG13G2, 130 nm | same | ✅ same |
-| Die | 2500 × 2000 µm, QFN-64, 48 signal pads | same footprint | ❌ no pad ring yet; P0 was a 640 × 640 µm core-only harden |
-| Utilisation | 54% | comparable | 42% core-only, not the same measurement |
-| Maximum frequency | 112 MHz (1.08 ns slack at 10 ns) | reported for the **full chip with pads** | 144 MHz core-only — deliberately *not* comparable, see `pd/results/p0/METRICS.md` |
-| Power | 269 mW | reported | 19.7 mW core-only. Ours should be far lower: theirs is a much larger design running every cycle |
-| DRC | clean | clean, **signoff** | only the router's own check so far, which is not the same thing |
-| LVS | clean (Calibre) | clean (**KLayout**) | never run |
-| Die render | published | published | ✅ for the core and the memory test |
-| Written report | `report/*.pdf` with sweeps | equivalent | docs, but no single report artifact |
+| Process | IHP SG13G2, 130 nm | IHP SG13G2, 130 nm | ✅ same |
+| Die | 2500 × 2000 µm, QFN-64 | 2500 × 2000 µm, 47 pads | ✅ same footprint |
+| Utilisation | 54% | **62%** | ✅ comparable |
+| Maximum frequency | 112 MHz (1.08 ns slack at 10 ns) | **107.7 MHz** (0.72 ns slack at 10 ns) | ✅ within 4%, same constraint |
+| Power | 269 mW | 4.34 mW | theirs is a far larger design, working every cycle |
+| Router DRC | — | **0 violations** | ✅ |
+| Signoff DRC | clean | running | |
+| LVS | clean (Calibre) | running (**KLayout**) | open-source path |
+| Die render | published | ✅ `pd/results/tinytrust_soc/` | |
+| Written report | `report/*.pdf` | METRICS.md per milestone | |
+
+Measured 2026-09-05, full chip with pads. Details and the honest list of what
+this does *not* establish are in
+[`pd/results/tinytrust_soc/METRICS.md`](../pd/results/tinytrust_soc/METRICS.md).
 
 ### The one that looked hard is not
 
@@ -241,7 +246,7 @@ them bonded to nothing. That is an S1-C decision and is taken there.
 |---|---|---|
 | **S1-A** | Connect it all together | ✅ **done 2026-09-05.** Bus, serial port, I/O pins, timer, serial boot ROM, main memory and the top level, each tested on its own plus a whole-chip smoke test that loads a program over the serial port and runs it. Memory map per §3 above |
 | **S1-B** | Whole-chip simulation and software | Start-up code runs, software prints over the serial port, the crypto test vectors run on-chip, a timer interrupt is taken. The reference-model comparison still shows zero disagreements at chip level |
-| **S1-C** | Pads and full-chip layout | Pad ring, floorplan with several memory blocks placed, power grid, clock tree, routing. Timing met across the whole chip, zero routing violations |
+| **S1-C** | Pads and full-chip layout | ✅ **done 2026-09-05.** 47-pad ring, six memory blocks placed, power grid connected, clock tree, routed. 107.7 MHz, 62% utilisation, zero routing violations, GDS produced |
 | **S1-D** | Final checks | DRC clean, **LVS clean**, and gate-level simulation running the S1-B software |
 | **S1-E** | Submit | Manufacturing agreement signed, slot booked, layout submitted |
 

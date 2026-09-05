@@ -25,26 +25,29 @@ something is an estimate, it says so.
 
 | | |
 |---|---|
-| **Factory-ready layout** | ✅ produced, with zero layout rule violations |
-| **Clock speed** | **144 MHz** (processor core on its own) |
+| **Factory-ready layout** | ✅ **the whole chip, with its pad ring** — zero routing violations |
+| **Clock speed** | **107.7 MHz** for the complete chip, pads included |
 | **Speed improvement** | **2.99×** faster than the first working version |
 | **Instruction-set proof** | **44 of 44** checks pass, on both processor cores |
 | **Reference cross-check** | Zero disagreements over 18,973 instructions |
 | **Caches** | 4 KB instruction + 4 KB data, on real foundry memory blocks |
-| **Working on now** | S1 — the chip boots, loads a program over serial and runs it |
+| **Working on now** | S1 — chip laid out and routed; manufacturing checks next |
 
-The chip currently starts up, says hello over its serial port, accepts a
-program sent to it, writes it into memory and runs it — all in simulation, with
-the whole design synthesised at 1.33 mm².
+The chip starts up, says hello over its serial port, accepts a program sent to
+it, writes it into memory and runs it. The whole thing — processor, caches,
+memory, peripherals and a 47-pad ring — is laid out and routed on a
+2500 × 2000 µm die at 62% utilisation, running at 107.7 MHz with zero routing
+violations.
 
 <table>
 <tr>
 <td width="50%"><img src="pd/results/p0/final_all.webp" alt="Die render of the processor core"><br>
 <sub><b>The processor core as a finished layout.</b> 640 × 640 µm. This is the
 kind of file a factory needs. The pink and cyan lines are the power grid.</sub></td>
-<td width="50%"><img src="pd/results/sram_smoke/final_all.webp" alt="Die render of the SRAM test"><br>
-<sub><b>A memory block test.</b> Run before committing to the cache design, to
-check the foundry's memory blocks survive the tool flow. They do.</sub></td>
+<td width="50%"><img src="pd/results/tinytrust_soc/final_all.webp" alt="Die render of the whole chip"><br>
+<sub><b>The whole chip.</b> 2500 × 2000 µm. The ring around the edge is the 47
+pads; the six dark rectangles are the memory blocks — one per cache and four
+for main memory.</sub></td>
 </tr>
 </table>
 
@@ -210,11 +213,13 @@ KLayout `0.30.7`.
 
 | | |
 |---|---|
-| Core area | 409,969 µm², 42% full |
-| Maximum clock speed | 144.11 MHz |
-| Timing | meets its target with 3.06 ns to spare |
-| Layout rule violations | **zero** |
-| Power | 19.7 mW |
+| Die | 2500 × 2000 µm |
+| Design area | 1,452,940 µm², 62% full |
+| Maximum clock speed | 107.72 MHz, whole chip including pads |
+| Timing | meets its target with 0.72 ns to spare |
+| Routing violations | **zero** |
+| Power | 4.34 mW |
+| Instances | 117,101, including 6 memory blocks and 47 pads |
 | One 4 KB memory block | 150,102 µm², and 66.6% of the power in that test |
 | Original processor core | 18.97 kGE, 1,419 storage elements |
 
@@ -252,9 +257,9 @@ removes risk for the next. Full detail in
 | | | |
 |---|---|---|
 | **S1-A** | Connect it together: bus, serial port, timer, boot code, memory | ✅ 2026-09-05 |
-| **S1-B** | Simulate the whole chip and get software running on it | ⬅ next |
-| **S1-C** | Add the external pins and lay out the full chip | |
-| **S1-D** | Final manufacturing checks | |
+| **S1-B** | Simulate the whole chip and get software running on it | mostly done in S1-A |
+| **S1-C** | Add the external pins and lay out the full chip | ✅ 2026-09-05 |
+| **S1-D** | Final manufacturing checks | ⬅ running now |
 | **S1-E** | Submit for manufacture | |
 
 **Later chips**
