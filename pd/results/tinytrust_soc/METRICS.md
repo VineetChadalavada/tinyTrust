@@ -20,6 +20,13 @@ the pad's own delay, into the logic, and back out through an output pad.
 
 ## Results
 
+> **These numbers are from the first routed chip, before the fixes below were
+> applied.** They were measured, and they stand as measured: 4 mA output pads,
+> density fill over the core box only, and the reduced DRC deck. The re-run
+> with 16 mA pads, full-die fill and the full deck has not completed — see
+> "Finishing this off" at the end.
+
+
 | Metric | Value |
 |---|---|
 | Die | 2500 × 2000 µm |
@@ -178,3 +185,42 @@ Toolchain as P0: OpenROAD `26Q3-1278-g4421880472`, Yosys `0.68+`, KLayout
    appears two stages later, from a different tool, naming an instance that
    looks like it should exist: `[ERROR PAD-0102] Unable to find instance:
    sg13g2_IOPad_vdd1`. `(* keep *)` holds them.
+
+## Finishing this off
+
+Everything up to and including global route completes reliably here.
+**Detailed routing does not**, and neither does LVS. Both are single long
+stages with no mid-stage checkpoint, and this environment cannot hold a
+process long enough: WSL2 shuts the distribution down once the last attached
+shell exits, and the stage dies with `Hangup` and restarts from zero next
+time. Earlier stages survive because ORFS checkpoints between them.
+
+So the remaining work is one uninterrupted pass, best run from a terminal
+that stays open:
+
+```
+wsl -d Ubuntu -u root
+bash pd/designs/tinytrust_soc/run_chip.sh all
+```
+
+That does flow, then full-deck signoff DRC, then LVS. Expect an hour or two,
+most of it LVS — the six SRAM macros expand to a very large transistor
+network and every device gets compared.
+
+What that run should show, and what to check:
+
+1. **Slew violations gone.** The output pads are 16 mA now instead of 4 mA.
+2. **The 22 density violations gone**, or greatly reduced — the fill now
+   covers the whole die rather than the core box.
+3. **More violations than before is the expected outcome, not a regression.**
+   The deck changed from `sg13g2_minimal.lydrc` to `sg13g2_maximal.lydrc`,
+   which is four times the rules. A clean result against the full deck is a
+   much stronger claim than a clean result against the reduced one.
+4. **LVS is the unknown.** It has never returned a verdict here. A first LVS
+   run usually surfaces device-recognition and black-boxing questions before
+   it surfaces real mismatches.
+
+Still outstanding after that: the seal ring, which is die-size specific and
+has to be drawn for 2500 x 2000 — the rules to check it against are in the
+deck now being used. Then gate-level simulation of `6_final.v` against the
+S1-A boot-and-load test.

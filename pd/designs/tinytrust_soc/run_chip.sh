@@ -31,15 +31,24 @@ TOP=soc_chip
 
 cd "$ORFS" || exit 1
 
-run_flow() {
-    echo "=== full flow ==="
-    # Start clean: the pad drive, the fill hook and the DRC deck all changed,
-    # and a partially stale result tree is worse than no result tree.
+# Wiping the tree is its own mode, never part of a build. ORFS is
+# stage-based and resumes from whatever finished, which is the only thing
+# that makes progress possible in this environment: a run that gets killed
+# part way still leaves its completed stages behind, and the next
+# invocation carries on. An unconditional rm -rf at the top of the build
+# turns that into starting over every time -- which is exactly how a good
+# routed result got thrown away once.
+run_clean() {
+    echo "=== wiping the result tree ==="
     rm -rf results/ihp-sg13g2/tinytrust_soc \
            objects/ihp-sg13g2/tinytrust_soc \
            logs/ihp-sg13g2/tinytrust_soc \
            reports/ihp-sg13g2/tinytrust_soc
-    make DESIGN_CONFIG="$CFG" > "$LOGDIR/tt_flow.log" 2>&1
+}
+
+run_flow() {
+    echo "=== flow (resumes from whatever already completed) ==="
+    make DESIGN_CONFIG="$CFG" >> "$LOGDIR/tt_flow.log" 2>&1
     echo "  exit $?"
     if [ -f "$RES/6_final.gds" ]; then
         echo "  GDS: $(ls -la "$RES/6_final.gds" | awk '{print $5}') bytes"
@@ -108,9 +117,10 @@ run_lvs() {
 }
 
 case "$WHAT" in
+    clean) run_clean ;;
     flow) run_flow ;;
     drc)  run_drc ;;
     lvs)  run_lvs ;;
     all)  run_flow ; run_drc ; run_lvs ;;
-    *)    echo "usage: $0 [flow|drc|lvs|all]" ; exit 2 ;;
+    *)    echo "usage: $0 [clean|flow|drc|lvs|all]" ; exit 2 ;;
 esac
