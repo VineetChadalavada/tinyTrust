@@ -31,8 +31,8 @@ module soc_chip (
     sg13g2_IOPadIn      sg13g2_IOPad_clk (.pad(pad_clk), .p2c(clk_i));
     sg13g2_IOPadIn      sg13g2_IOPad_rst_n (.pad(pad_rst_n), .p2c(rst_n_i));
     sg13g2_IOPadIn      sg13g2_IOPad_uart_rx (.pad(pad_uart_rx), .p2c(uart_rx_i));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_uart_tx (.pad(pad_uart_tx), .c2p(uart_tx_o));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_alert (.pad(pad_alert), .c2p(sec_alert_o));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_uart_tx (.pad(pad_uart_tx), .c2p(uart_tx_o));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_alert (.pad(pad_alert), .c2p(sec_alert_o));
     sg13g2_IOPadIn      sg13g2_IOPad_strap_0 (.pad(pad_strap[0]), .p2c(straps_i[0]));
     sg13g2_IOPadIn      sg13g2_IOPad_strap_1 (.pad(pad_strap[1]), .p2c(straps_i[1]));
     sg13g2_IOPadIn      sg13g2_IOPad_gpio_in_0 (.pad(pad_gpio_in[0]), .p2c(gpio_in_i[0]));
@@ -51,22 +51,22 @@ module soc_chip (
     sg13g2_IOPadIn      sg13g2_IOPad_gpio_in_13 (.pad(pad_gpio_in[13]), .p2c(gpio_in_i[13]));
     sg13g2_IOPadIn      sg13g2_IOPad_gpio_in_14 (.pad(pad_gpio_in[14]), .p2c(gpio_in_i[14]));
     sg13g2_IOPadIn      sg13g2_IOPad_gpio_in_15 (.pad(pad_gpio_in[15]), .p2c(gpio_in_i[15]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_0 (.pad(pad_gpio_out[0]), .c2p(gpio_out_o[0]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_1 (.pad(pad_gpio_out[1]), .c2p(gpio_out_o[1]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_2 (.pad(pad_gpio_out[2]), .c2p(gpio_out_o[2]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_3 (.pad(pad_gpio_out[3]), .c2p(gpio_out_o[3]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_4 (.pad(pad_gpio_out[4]), .c2p(gpio_out_o[4]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_5 (.pad(pad_gpio_out[5]), .c2p(gpio_out_o[5]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_6 (.pad(pad_gpio_out[6]), .c2p(gpio_out_o[6]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_7 (.pad(pad_gpio_out[7]), .c2p(gpio_out_o[7]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_8 (.pad(pad_gpio_out[8]), .c2p(gpio_out_o[8]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_9 (.pad(pad_gpio_out[9]), .c2p(gpio_out_o[9]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_10 (.pad(pad_gpio_out[10]), .c2p(gpio_out_o[10]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_11 (.pad(pad_gpio_out[11]), .c2p(gpio_out_o[11]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_12 (.pad(pad_gpio_out[12]), .c2p(gpio_out_o[12]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_13 (.pad(pad_gpio_out[13]), .c2p(gpio_out_o[13]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_14 (.pad(pad_gpio_out[14]), .c2p(gpio_out_o[14]));
-    sg13g2_IOPadOut4mA  sg13g2_IOPad_gpio_out_15 (.pad(pad_gpio_out[15]), .c2p(gpio_out_o[15]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_0 (.pad(pad_gpio_out[0]), .c2p(gpio_out_o[0]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_1 (.pad(pad_gpio_out[1]), .c2p(gpio_out_o[1]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_2 (.pad(pad_gpio_out[2]), .c2p(gpio_out_o[2]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_3 (.pad(pad_gpio_out[3]), .c2p(gpio_out_o[3]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_4 (.pad(pad_gpio_out[4]), .c2p(gpio_out_o[4]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_5 (.pad(pad_gpio_out[5]), .c2p(gpio_out_o[5]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_6 (.pad(pad_gpio_out[6]), .c2p(gpio_out_o[6]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_7 (.pad(pad_gpio_out[7]), .c2p(gpio_out_o[7]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_8 (.pad(pad_gpio_out[8]), .c2p(gpio_out_o[8]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_9 (.pad(pad_gpio_out[9]), .c2p(gpio_out_o[9]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_10 (.pad(pad_gpio_out[10]), .c2p(gpio_out_o[10]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_11 (.pad(pad_gpio_out[11]), .c2p(gpio_out_o[11]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_12 (.pad(pad_gpio_out[12]), .c2p(gpio_out_o[12]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_13 (.pad(pad_gpio_out[13]), .c2p(gpio_out_o[13]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_14 (.pad(pad_gpio_out[14]), .c2p(gpio_out_o[14]));
+    sg13g2_IOPadOut16mA sg13g2_IOPad_gpio_out_15 (.pad(pad_gpio_out[15]), .c2p(gpio_out_o[15]));
 
     // ---- supply pads ----
     // (* keep *) is load-bearing here. A supply pad has no ports and

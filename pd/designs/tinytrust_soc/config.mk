@@ -111,6 +111,18 @@ export PLACE_DENSITY_LB_ADDON = 0.2
 export TNS_END_PERCENT        = 100
 export USE_FILL               = 1
 
+# ORFS's density_fill step passes no -area, so OpenROAD fills only the core
+# box -- leaving the 351 um moat between the core and the pad ring empty and
+# failing the foundry's minimum-density rules. This hook refills across the
+# whole die. See fill_moat.tcl and pd/results/tinytrust_soc/METRICS.md.
+export POST_DENSITY_FILL_TCL  = $(TT_PD)fill_moat.tcl
+
+# The platform defaults to drc/sg13g2_minimal.lydrc, a 54 KB reduced deck.
+# The full one is 201 KB -- roughly four times the rules. Running the reduced
+# deck and calling the result signoff-clean would be a weaker claim than it
+# sounds, so use the full one.
+export KLAYOUT_DRC_FILE = $(PLATFORM_DIR)/drc/sg13g2_maximal.lydrc
+
 # RVFI is compiled out unless RISCV_FORMAL is defined, which it is not here.
 # Leaving it in costs 21% of the processor's area and 383 of its 492 port
 # bits, for a port that only the proofs consume. See RETARGET.md 4.

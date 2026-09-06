@@ -1,37 +1,26 @@
 #!/usr/bin/env bash
-# TinyTrust S1-D -- signoff checks on the routed chip.
+# TinyTrust S1-C/S1-D -- build the chip and check it.
 #
-#   sudo bash pd/designs/tinytrust_soc/run_signoff.sh [drc|lvs|both]
+#   sudo bash pd/designs/tinytrust_soc/run_chip.sh [flow|drc|lvs|all]
 #
 # Run as root: the toolchain was installed as root by pd/setup_wsl.sh, so the
 # flow directory is not writable by anyone else.
 #
-# Logs go to /root rather than /tmp. /tmp is cleaned periodically on this
-# machine, which already ate one signoff log mid-run.
-#
 # ---------------------------------------------------------------------------
-# WHY LVS IS NOT JUST `make lvs`
+# KEEP A SHELL ATTACHED TO WSL WHILE THIS RUNS
 #
-# ORFS has an `lvs` target, and on this platform it does nothing:
+# WSL2 shuts the whole distribution down shortly after the last attached shell
+# exits, and it does not care that something is still running inside. A job
+# started with setsid/nohup dies with it, /tmp is wiped, and the only clue is
+# that `ps -o etime 1` shows init a few seconds old.
 #
-#     echo "LVS not supported on this platform" > .../6_lvs.lvsdb
-#
-# It writes that string and exits 0, which is a false green of exactly the
-# kind BUG-003 and BUG-006 were about -- a step that reports success without
-# checking anything.
-#
-# The check itself is perfectly available: the platform ships KLayout rule
-# decks at lvs/sg13g2.lvs with a runner, and all the cell netlists
-# (standard cells, IO pads, SRAM macros) in cdl/. They are just not wired into
-# the ORFS target. So this script builds the full netlist and calls the deck
-# directly.
-#
-# That still leaves the project's whole path open-source, which is the point:
-# the reference chip used Calibre for this step.
+# That killed a routing run and an hour-long LVS here before it was
+# understood. If you launch this and then close every shell, expect it to
+# vanish. Keep one open, or run it in the foreground.
 # ---------------------------------------------------------------------------
 set -u
 
-WHAT="${1:-both}"
+WHAT="${1:-all}"
 ORFS=/opt/OpenROAD-flow-scripts/flow
 PLAT=$ORFS/platforms/ihp-sg13g2
 CFG=/mnt/e/tinytrust/pd/designs/tinytrust_soc/config.mk
@@ -42,18 +31,37 @@ TOP=soc_chip
 
 cd "$ORFS" || exit 1
 
+run_flow() {
+    echo "=== full flow ==="
+    # Start clean: the pad drive, the fill hook and the DRC deck all changed,
+    # and a partially stale result tree is worse than no result tree.
+    rm -rf results/ihp-sg13g2/tinytrust_soc \
+           objects/ihp-sg13g2/tinytrust_soc \
+           logs/ihp-sg13g2/tinytrust_soc \
+           reports/ihp-sg13g2/tinytrust_soc
+    make DESIGN_CONFIG="$CFG" > "$LOGDIR/tt_flow.log" 2>&1
+    echo "  exit $?"
+    if [ -f "$RES/6_final.gds" ]; then
+        echo "  GDS: $(ls -la "$RES/6_final.gds" | awk '{print $5}') bytes"
+        grep -hE 'fmax|worst slack|Design area' "$RPT/6_finish.rpt" 2>/dev/null | head -4
+        echo "  router DRC violations: $(wc -l < "$RPT/5_route_drc.rpt" 2>/dev/null)"
+    else
+        echo "  NO GDS -- last lines:"
+        tail -12 "$LOGDIR/tt_flow.log"
+    fi
+}
+
 run_drc() {
-    echo "=== signoff DRC ==="
+    echo "=== signoff DRC (full deck) ==="
     make DESIGN_CONFIG="$CFG" drc > "$LOGDIR/tt_drc.log" 2>&1
     echo "  exit $?"
     if [ -f "$RPT/6_drc.lyrdb" ]; then
-        local n
-        n=$(grep -c '<item>' "$RPT/6_drc.lyrdb" 2>/dev/null || echo 0)
-        echo "  violations: $n"
+        echo "  violations: $(grep -c '<item>' "$RPT/6_drc.lyrdb")"
         grep -oP "(?<=<category>).*?(?=</category>)" "$RPT/6_drc.lyrdb" \
-            | sort | uniq -c | sort -rn
+            | sort | uniq -c | sort -rn | head -15
     else
-        echo "  no report produced"
+        echo "  no report; last lines:"
+        tail -8 "$LOGDIR/tt_drc.log"
     fi
 }
 
@@ -73,15 +81,15 @@ run_lvs() {
     #
     # io.cdl alone has every cell this chip instantiates. This is the third
     # duplicate-definition problem in this flow, after the doubled Liberty
-    # that killed ABC and the doubled LEF that only warned -- worth knowing
-    # the shape of it.
+    # that killed ABC and the doubled LEF that only warned.
     cat "$RES/6_final.cdl" \
         "$PLAT/cdl/sg13g2_stdcell.cdl" \
         "$PLAT/cdl/sg13g2_io.cdl" \
         "$PLAT/cdl/RM_IHPSG13_1P_512x64_c2_bm_bist.cdl" \
         > "$netlist" 2>/dev/null
-
     echo "  netlist: $(wc -l < "$netlist") lines"
+    echo "  (this takes a long while -- the six SRAM macros expand to a very"
+    echo "   large transistor network and every one of them is compared)"
 
     # Driven through the klayout binary rather than the platform's run_lvs.py.
     # That wrapper needs the klayout *Python* module on top of the installed
@@ -95,13 +103,14 @@ run_lvs() {
         -rd report="$LOGDIR/tt_lvs.lvsdb" \
         -rd run_mode=deep \
         > "$LOGDIR/tt_lvs.log" 2>&1
-    echo "  exit $?, log $LOGDIR/tt_lvs.log"
-    tail -15 "$LOGDIR/tt_lvs.log"
+    echo "  exit $?"
+    tail -12 "$LOGDIR/tt_lvs.log"
 }
 
 case "$WHAT" in
+    flow) run_flow ;;
     drc)  run_drc ;;
     lvs)  run_lvs ;;
-    both) run_drc ; run_lvs ;;
-    *)    echo "usage: $0 [drc|lvs|both]" ; exit 2 ;;
+    all)  run_flow ; run_drc ; run_lvs ;;
+    *)    echo "usage: $0 [flow|drc|lvs|all]" ; exit 2 ;;
 esac

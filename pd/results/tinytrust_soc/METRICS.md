@@ -104,10 +104,23 @@ every instance reads as an unresolved black box — and calls the deck itself.
   area, and the standard-cell filler that `USE_FILL` inserts is not the same
   thing as metal fill across the die.
 
-  The likely concentration is the ring between the core box and the pad ring —
-  351 µm of it on every side, with no logic in it and therefore almost no
-  metal. That is a hypothesis from the geometry, not yet confirmed against the
-  violation coordinates, and confirming it is the first step in fixing this.
+  **Cause found, in ORFS's own fill step.** `scripts/density_fill.tcl` calls
+
+  ```tcl
+  density_fill -rules $::env(FILL_CONFIG)
+  ```
+
+  with no `-area` argument, and OpenROAD then defaults to the **core** area. On
+  this chip the core box is inset 351 µm from the die edge on every side to
+  make room for the pad ring, so that moat — roughly a third of the die — gets
+  no fill at all. That is where the empty density windows are. It was a guess
+  from the geometry first; reading the script turned it into a fact.
+
+  The fix is `fill_moat.tcl`, hooked in through `POST_DENSITY_FILL_TCL`: run
+  the same fill again over the full die area, additively, so the core keeps
+  what it has and the moat gets the same treatment. Not yet re-run — the LVS
+  pass currently reading `6_final.gds` has to finish first, since refilling
+  regenerates it.
 
   Density fill is routine tape-out work rather than a design problem, but it is
   work, and the chip is not signoff-clean until it is done.

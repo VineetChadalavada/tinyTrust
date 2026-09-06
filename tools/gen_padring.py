@@ -30,8 +30,16 @@ ROOT = os.path.dirname(HERE)
 GPIO_W = 16
 
 # Each entry: (instance suffix, kind, chip port, internal signal)
-#   in   -> sg13g2_IOPadIn        pad -> p2c
-#   out  -> sg13g2_IOPadOut4mA    c2p -> pad
+#   in   -> sg13g2_IOPadIn         pad -> p2c
+#   out  -> sg13g2_IOPadOut16mA    c2p -> pad
+#
+# 16 mA, not 4 mA. The constraints assume each output drives 5 pF of board
+# trace, which is realistic for a package pin going to another chip, and a
+# 4 mA driver cannot slew that fast: the first routed chip had every output
+# pad failing its slew limit at 4.68 ns against a 1.20 ns budget. 5 pF is the
+# honest load, so the answer is a stronger driver rather than a softer
+# assumption. The platform's own reference design uses 16 mA for general I/O
+# for the same reason.
 def signal_pads():
     p = []
     p.append(("clk",      "in",  "pad_clk",      "clk_i"))
@@ -137,7 +145,7 @@ def main():
                 f.write("    sg13g2_IOPadIn      %s (.pad(%s), .p2c(%s));\n"
                         % (name, port, sig))
             else:
-                f.write("    sg13g2_IOPadOut4mA  %s (.pad(%s), .c2p(%s));\n"
+                f.write("    sg13g2_IOPadOut16mA %s (.pad(%s), .c2p(%s));\n"
                         % (name, port, sig))
 
         f.write("\n    // ---- supply pads ----\n")
