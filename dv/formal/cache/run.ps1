@@ -70,7 +70,7 @@ $jobs = @()
 foreach ($t in $targets) {
     foreach ($legSuffix in $legs) {
         if ($legSuffix -eq "" -and $t -eq "dcache" -and -not $IncludeOpen) {
-            Write-Host "----- skipping dcache (bmc): known not to close, see dcache.sby; -IncludeOpen to run it"
+            Write-Host "----- skipping dcache (bmc): superseded by dcache_kind, which proves the same property by induction. This route cannot close; see dcache.sby for the cost curve. -IncludeOpen to run it anyway"
             continue
         }
         $jobs += "$t$legSuffix"

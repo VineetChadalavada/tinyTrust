@@ -1,4 +1,13 @@
-# CACHE-FV-01, D$ -- KNOWN NOT TO CLOSE. Not part of the default suite.
+# CACHE-FV-01, D$ -- SUPERSEDED. Not part of the default suite.
+#
+# The property this file tries to prove IS proven, by dcache_kind.sby, using
+# induction instead of a bounded run. This config is kept only because the
+# measurements below are why the method had to change, and because the next
+# person to reach for a bounded proof on a cache should see the cost curve
+# before spending a day on it.
+#
+# This route still cannot close. That is not a failure any more; it is the
+# reason the other file exists.
 #
 # Kept because the measurements below are the useful result, and because the
 # next person to attempt this should not have to rediscover them.
