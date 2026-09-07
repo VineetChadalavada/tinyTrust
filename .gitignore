@@ -34,5 +34,7 @@ dv/formal/cache/icache_cover/
 dv/formal/cache/dcache_cover/
 dv/formal/cache/dcache_prove/
 dv/formal/cache/dcache_prove_abs/
+dv/formal/cache/dcache_kind/
+dv/formal/cache/dcache_kind_cover/
 dv/cache/out/
 dv/soc/out/
