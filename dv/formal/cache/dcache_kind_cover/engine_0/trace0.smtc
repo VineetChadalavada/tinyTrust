@@ -1,0 +1,50 @@
+initial
+assume (= [$auto$async2sync.cc:253:execute$2205] #b00000000000000000000000000)
+assume (= [$auto$async2sync.cc:253:execute$2207] #b00000000000000000000000000)
+assume (= [$auto$async2sync.cc:253:execute$2209] #b00000000000000000000000000)
+assume (= [$auto$async2sync.cc:253:execute$2211] #b00000000000000000000000000)
+assume (= [$auto$async2sync.cc:253:execute$2213] #b00)
+assume (= [$auto$async2sync.cc:253:execute$2215] #b00)
+assume (= [$auto$async2sync.cc:253:execute$2217] #b00)
+assume (= [$auto$async2sync.cc:253:execute$2219] #b00)
+assume (= [$auto$async2sync.cc:253:execute$2221] #b00)
+assume (= [$auto$async2sync.cc:253:execute$2223] #b0000)
+assume (= [p_addr] #b00000000000000000000000000000000)
+assume (= [p_pending] false)
+assume (= [p_wdata] #b00000000000000000000000000000000)
+assume (= [p_wstrb] #b0000)
+assume (= [rst_cnt] #b00)
+assume (= [stall_cnt] #b01)
+assume (= [uut.line_base] #b00000000000000000000000000000000)
+assume (= [uut.wb_tag] #b00000000000000000000000000)
+assume (= [wb_seen] false)
+
+state 0
+assume (= [clk] false)
+
+state 1
+assume (= [clk] false)
+
+state 2
+assume (= [clk] false)
+
+state 3
+assume (= [clk] false)
+
+state 4
+assume (= [clk] false)
+
+state 5
+assume (= [clk] false)
+
+state 6
+assume (= [clk] false)
+
+state 7
+assume (= [clk] false)
+
+state 8
+assume (= [clk] false)
+
+state 9
+assume (= [clk] false)

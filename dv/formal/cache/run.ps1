@@ -61,6 +61,11 @@ $legs = switch ($Leg) {
     default { @("", "_cover") }
 }
 
+# The data cache is proven by induction rather than by a bounded run, so it
+# has its own pair: dcache_kind.sby and its non-vacuity witness. See the
+# header of dcache_kind.sby for why the bounded route could never work.
+$extra = @("dcache_kind", "dcache_kind_cover")
+
 $jobs = @()
 foreach ($t in $targets) {
     foreach ($legSuffix in $legs) {
@@ -71,6 +76,8 @@ foreach ($t in $targets) {
         $jobs += "$t$legSuffix"
     }
 }
+
+$jobs += $extra
 
 $fail = 0
 foreach ($job in $jobs) {

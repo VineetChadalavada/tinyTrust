@@ -655,7 +655,58 @@ passes by never reaching the interesting case was a live possibility, not a
 theoretical one. Both caches now confirm a read really happens, at step 9, in
 about a second.
 
-**Data cache — does not close, for two independent measured reasons.**
+**Data cache — now proven, by induction rather than by a bounded run
+(2026-09-06).**
+
+The bounded route never could work, for the two measured reasons kept below,
+and both remain true. What changed is the method.
+
+A bounded proof starts at reset and replays forward, which is why the eviction
+sequence costs what it does. **Induction starts from an arbitrary state** and
+shows the property survives one more step. Reset never enters it, so depth
+stops being what matters. The new difficulty is that most arbitrary states are
+unreachable nonsense — a cache claiming to hold a line whose stored data is
+unrelated to anything ever written — and invariants are what rule those out.
+
+The invariant is the classic statement that this is a correct write-back
+cache, written against the tracked word:
+
+- if the line is resident, the array holds what the core last wrote
+- if it is resident and clean, memory agrees too
+- if it is not resident, memory holds the value
+
+The one case with no constraint on memory is a resident dirty line, which is
+exactly what "dirty" means. These are *asserted*, not assumed, so the induction
+has to establish them as well as use them.
+
+| | |
+|---|---|
+| Result | **PASS**, base case and induction — `dcache_kind.sby` |
+| Induction depth | 20, and again at 30 |
+| Base case | passes in about a second |
+| Non-vacuity | read of the tracked word at step 9; **the full eviction sequence at step 28**, same defines and geometry |
+
+This is a stronger result than the instruction cache's, which is bounded to 26
+cycles. This one holds for all time.
+
+Two restrictions apply and are not hidden: the reduced 16 B / 4-line geometry,
+and the data abstraction restricting environment bytes to `0x00` or `0xFF`.
+Both are argued sound where they are declared, and the block testbench runs the
+shipped geometry with real data.
+
+**One obstacle worth knowing.** Yosys cannot read into a module from outside —
+writing `uut.mem[...]` in the harness silently produces an undriven wire, the
+same trap BUG-002 recorded. An inductive invariant has to say what the array
+*holds*, so `cache.v` and the memory model gained proof-only observation ports
+under `` `ifdef FORMAL ``. Nothing that synthesises sees them, and the full
+regression is green with them in place.
+
+### Why the bounded route could not work
+
+Kept because it is what forced the change of method, and because the numbers
+are the argument.
+
+**Two independent measured reasons.**
 
 | | |
 |---|---|
@@ -723,15 +774,19 @@ Three lessons worth keeping:
 | Instruction and data caches on real memory blocks | **met** — 4 KB each, real `RM_IHPSG13_1P_512x64` blocks |
 | Hits and misses verified | **met** — block-level transfer counting plus the system-level runs |
 | Still 44/44 | **met, both cores, both measured** — pipelined core re-measured after all cache work; old core re-run 2026-09-03 |
-| *(added by D22)* the cache proven separately | **met for the instruction cache** — passes at 26 cycles with a non-emptiness check. **Open for the data cache**, with the reason now measured rather than "no result": about 4x per step, and a bound of 28 needed to reach an eviction |
+| *(added by D22)* the cache proven separately | **met, both caches.** Instruction cache passes to 26 cycles; data cache **proven unbounded by induction** (2026-09-06), non-vacuity confirmed to the eviction sequence at step 28 |
 
-P3 is closed on three of four criteria and knowingly open on the fourth. The
-change since 2026-08-31 is that the open item stopped being "the proof did not
-return" and became a specific, measured statement: a bounded proof from reset
-cannot reach the data cache's eviction sequence at any affordable cost, and the
-way through is induction or a split property, which is coherence machinery. That
-is a milestone exit, not a milestone stall — but it is an exit with one
-criterion deliberately unmet, and the coherence work inherits it.
+**P3 is now closed on all four criteria** (2026-09-06). It spent three days
+open on the last one, and the sequence is worth keeping: the bounded proof did
+not return; then it was measured and shown it never could; then the method
+changed and it closed in seconds. The middle step is the one that mattered.
+"It did not finish" and "it cannot finish, and here is the cost curve" look
+alike in a status table and lead to completely different next actions.
+
+The induction machinery was built as S2 groundwork rather than P3 cleanup,
+because COH-INV-03 is this same property across two caches and would have hit
+the same wall. Closing P3 was the side effect of building what the coherence
+work needs.
 
 Two things were found while closing this out that were not part of the plan,
 both recorded above: the non-emptiness check in the setup had never run because

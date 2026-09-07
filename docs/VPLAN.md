@@ -200,7 +200,7 @@ Critical, because the start-up ROM cannot be patched after manufacture.
 | CACHE-BM-01 | Byte and half-word writes go through the memory block's write mask without a read-modify-write | `dv/cache` directed |
 | CACHE-UNC-01 | Addresses above the cacheable limit always bypass the cache and are never stored | `dv/cache` directed + traffic counting |
 | CACHE-FLT-01 | A memory error during a fetch reaches the processor and leaves no valid line behind | `dv/cache` directed |
-| CACHE-FV-01 | **The cache is invisible: a read returns the last value written to that address** | F (`dv/formal/cache`, one-address abstraction). **Instruction cache PASSES** out to 26 cycles (2026-09-03), with a separate check that the test can actually reach a read. **Data cache open**: the bounded method needs 28 cycles to reach an eviction and each cycle costs about 4× the last, so it does not finish — see RETARGET.md §10.5 for the measurements and the way out |
+| CACHE-FV-01 | **The cache is invisible: a read returns the last value written to that address** | F (`dv/formal/cache`, one-address abstraction). **Instruction cache PASSES** out to 26 cycles. **Data cache PROVEN UNBOUNDED by k-induction** (2026-09-06) at depth 20 — the bounded method could never reach the eviction sequence, so the method was changed rather than the bound. Both have a matching non-vacuity run; the data cache's confirms the eviction sequence is reached at step 28 |
 | CACHE-SYS-01 | The processor with caches runs an identical instruction stream to the processor without them | reference-model comparison, 4th test leg |
 
 **Note on what the existing tests could not measure.** Every directed and random

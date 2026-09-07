@@ -1,0 +1,43 @@
+# CACHE-FV-01, D$ -- k-induction (S2 groundwork).
+#
+# WHY THIS, AND WHY NOW
+# The bounded proof cannot work: the eviction sequence is first reachable at
+# step 28 and cost grows ~4x per step, so the depth that would make a result
+# meaningful is unreachable (see dcache.sby). PDR did not converge either
+# (dcache_prove.sby). k-induction is the remaining option, and unlike PDR it
+# lets the invariants be written by hand rather than discovered.
+#
+# It is S2 work, not P3 cleanup. COHERENCE.md 6: COH-INV-03 -- a read returns
+# the most recent write by *either* core -- is a strictly harder version of
+# this same property over two caches, so whatever closes this is the method
+# the coherence proofs need. Getting it working here first means a failing
+# induction step points at weak invariants rather than at hardware nobody has
+# debugged yet.
+#
+# HOW INDUCTION DIFFERS FROM WHAT CAME BEFORE
+# A bounded proof starts at reset and replays forward, which is why the
+# eviction sequence costs what it does. Induction starts from an *arbitrary*
+# state and shows the property is preserved for one more step. Reset never
+# enters it, so depth stops being the problem. The new problem is that most
+# arbitrary states are unreachable nonsense, and the invariants are what rule
+# those out.
+[options]
+mode prove
+depth 30
+expect pass,fail,unknown
+
+[engines]
+smtbmc boolector
+
+[script]
+read -sv -DDCACHE -DFV_DATA_ABSTRACT -DFORMAL cache_fv.sv
+read -sv -DFORMAL cache.v
+read -sv -DFORMAL sram_1p_bm.v
+prep -top cache_fv -flatten
+memory_map
+opt -fast
+
+[files]
+cache_fv.sv
+../../../rtl/cache/cache.v
+../../models/sram_1p_bm.v

@@ -1,0 +1,9 @@
+Elapsed clock time [H:MM:SS (secs)]: 0:00:07 (7)
+Elapsed process time unvailable on Windows
+engine_0 (smtbmc boolector) returned pass
+cover trace: engine_0\trace0.vcd
+cover trace: engine_0\trace0.yw
+  reached cover statement cache_fv._witness_.check_cover_cache_fv_sv_379_147 at cache_fv.sv:379.13-379.30 step 9
+cover trace: engine_0\trace1.vcd
+cover trace: engine_0\trace1.yw
+  reached cover statement cache_fv._witness_.check_cover_cache_fv_sv_368_143 at cache_fv.sv:368.13-368.22 step 28

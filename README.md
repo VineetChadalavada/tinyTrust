@@ -29,6 +29,7 @@ something is an estimate, it says so.
 | **Clock speed** | **107.7 MHz** for the complete chip, pads included |
 | **Speed improvement** | **2.99×** faster than the first working version |
 | **Instruction-set proof** | **44 of 44** checks pass, on both processor cores |
+| **Cache proofs** | both caches proven — the data cache for all time, by induction |
 | **Reference cross-check** | Zero disagreements over 18,973 instructions |
 | **Caches** | 4 KB instruction + 4 KB data, on real foundry memory blocks |
 | **Working on now** | S1 — chip laid out and routed; manufacturing checks next |
@@ -151,7 +152,7 @@ flowchart LR
     RTL --> FV
     RTL --> TB
     ISS --> R["0 disagreements<br/>over 4 memory setups"]
-    FV --> R2["44/44 on both cores<br/>instruction cache proven"]
+    FV --> R2["44/44 on both cores<br/>both caches proven"]
     TB --> R3["66/66 crypto vectors<br/>cache traffic counted"]
 ```
 
@@ -173,16 +174,34 @@ a cache that never actually caches anything would still return correct answers.
 A cache hit must produce zero memory traffic, a miss exactly 16 transfers, and
 evicting modified data exactly 32.
 
-### What is not proven yet
+### Both caches are now proven
 
-The **data cache** proof does not finish, and this is stated rather than
-glossed over. To reach the case that matters — write to a line, push it out of
-the cache, write it back to memory, then read it again — the proof has to look
-28 clock cycles ahead, and each extra cycle costs about four times the previous
-one. Getting to cycle 28 would cost roughly 4¹¹ times what cycle 17 cost. That
-is not slow, it is out of reach. A different proof technique is needed, and it
-is the same one the two-core work will need, so it is being solved there.
-Details in [RETARGET.md](docs/RETARGET.md).
+The data cache took three attempts and a change of method, which is worth
+describing because the middle step is the one that mattered.
+
+Checking "no bug in the first N cycles" means replaying from reset every time.
+For the data cache the case that matters — write to a line, push it out, write
+it back to memory, read it again — is not reachable until cycle 28, and each
+extra cycle cost about four times the last. Reaching 28 would have cost roughly
+4¹¹ times what cycle 17 cost. Not slow: out of reach.
+
+Measuring that, rather than just watching it not finish, is what prompted
+changing technique instead of waiting longer. **Induction** starts from an
+arbitrary state and shows the property survives one more step, so reset is
+never replayed and depth stops mattering. What replaces it is describing the
+design well enough to rule out states it can never actually be in — for this
+cache, three statements: if a line is present the stored data is what was last
+written; if it is present and unmodified, memory agrees; if it is absent,
+memory holds the value.
+
+It passes, base case and induction, and the base case takes about a second. So
+the data cache is proven **for all time**, which is a stronger result than the
+instruction cache's exhaustive check out to 26 cycles.
+
+Two restrictions are worth stating: the proof runs on a smaller cache geometry
+and restricts the test data to two values per byte. Both are argued sound where
+they are declared — the cache never makes decisions based on data values — and
+the block-level tests run the real geometry with real data.
 
 Two problems were also found **in the testing setup itself**, and neither would
 ever have shown up as a failing test:

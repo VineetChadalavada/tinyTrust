@@ -209,19 +209,41 @@ bugs — store buffering, message passing, repeated reads of one location — pl
 the cache-to-cache transfer that separates MOESI from MESI. These are cheap to
 write once the bus exists.
 
-### The scheduling problem inherited from P3
+### The proof method — built first, and it works (2026-09-06)
 
-The single-cache version of COH-INV-03 **already does not finish** with the
-bounded proof method. It needs to look 28 cycles ahead, and each extra cycle
-costs about four times the last (see RETARGET.md §10.5). COH-INV-03 is a
-strictly harder version of that same property across two caches, so **it will
-not finish either**, and S2 should not spend days rediscovering that.
+This was called out as the critical path for S2, ahead of the protocol
+hardware, because COH-INV-03 is the single-cache property extended to two
+caches and the bounded method could not close even the single-cache version. It
+needed 28 cycles of depth at about four times the cost per cycle.
 
-So the better proof technique P3 postponed is not optional here. It is the
-critical path, and it should be built **before** the protocol hardware is
-finished, so the properties can be developed against a method that can actually
-evaluate them. That is the single most important consequence of P3's result for
-this milestone.
+**That is now solved.** The single-cache property is proven by k-induction, and
+the proof is in `dv/formal/cache/dcache_kind.sby`:
+
+| | |
+|---|---|
+| Result | PASS, base case and induction |
+| Depth | 20 |
+| Base case | about a second |
+| Non-vacuity | read at step 9, full eviction sequence at step 28 |
+
+The method matters more than the result. Induction starts from an arbitrary
+state rather than replaying from reset, so the depth that made the bounded
+proof impossible stops being relevant. What replaces it is the invariant work:
+saying enough about the design to rule out unreachable states. For the single
+cache that was three clauses — resident implies the array holds what was
+written, resident and clean implies memory agrees, not resident implies memory
+holds the value.
+
+**What this means for the coherence properties.** COH-INV-01 and COH-INV-02 are
+statements about which caches may hold a line in which state, which is exactly
+the shape of invariant this method wants. COH-INV-03 extends the single-cache
+invariant with a second cache and the bus, and the three clauses above are the
+skeleton it grows from: the same three cases, per cache, plus what the snoop
+transactions preserve.
+
+The proof-only observation ports added for this — `` `ifdef FORMAL `` reads of
+the tag, the coherence state, the FSM state and the data array — are what any
+two-cache invariant will need as well, and they are already there.
 
 ---
 
